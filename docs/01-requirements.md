@@ -1,6 +1,9 @@
 # NLOps 需求分析
 
-> 版本: v1.0  ·  最后更新: 2026-05-17  ·  基于 PPT《自然语言驱动的 AI 运维平台》重构
+> 版本: v2.0  ·  最后更新: 2026-05-17  ·  基于 PPT《自然语言驱动的 AI 运维平台》重构
+> v2 修订：将 AWS DevOps Agent 作为底层引擎；保留 6 个逻辑 Agent 概念但物理实现合并；明确 region 与定价
+
+---
 
 ## 1. 项目背景
 
@@ -15,7 +18,9 @@
 | 数据呈现 | 只有图表没有解读 | 需依赖个人经验解读 |
 
 ### 1.2 项目目标
-打造一个**自然语言驱动 + 智能闭环**的 AI 运维平台 (NLOps)，让运维人员通过语音 / 文字即可完成"发现 → 定位 → 修复 → 沉淀"全流程，做到**随时随地、开口即运维**。
+在 **AWS DevOps Agent** 作为底层"自治型 SRE 引擎"的基础上，构建一个**面向中国客户、语音 / IM 驱动的智能闭环运维平台 (NLOps)**。让运维人员通过语音 / 文字即可完成"发现 → 定位 → 修复 → 沉淀"全流程，做到**随时随地、开口即运维**。
+
+> **重要差异**：v1 版本设想从零自建 6 个 Agent；v2 版本采用 AWS DevOps Agent 作为引擎，NLOps 专注于语音入口 / 国内 IM / HTML 诊断书 / 写操作护栏等 4 类差异化能力。
 
 ---
 
@@ -26,45 +31,53 @@
 | SRE 工程师 | 一线值班人员 | 快速发现异常、根因定位、执行修复 |
 | 研发工程师 | 服务 owner | 接收事件通知、查看分析报告、复用历史经验 |
 | 运维负责人 | 团队 leader | 全局健康概览、SLA 跟踪、成本控制 |
-| 系统管理员 | 平台运维者 | 配置数据源、管理权限、维护知识库 |
+| 系统管理员 | 平台运维者 | 配置数据源、管理权限、维护知识库（含 DevOps Agent Skills 与 MCP 工具）|
 
 ---
 
 ## 3. 功能需求
 
-按优先级（P0 必须 / P1 应该 / P2 可以）梳理。
+按优先级（P0 必须 / P1 应该 / P2 可以）梳理。**6 个逻辑 Agent 作为业务概念保留**，物理实现见 `02-design.md`。
 
 ### 3.1 交互层 (P0)
 
 | ID | 需求 | 优先级 | 验收标准 |
 |----|------|--------|---------|
 | FR-1.1 | 多入口接入：Amazon Quick (MCP)、企微 Bot、飞书 Bot | P0 | 三个入口均可发起运维请求并获得相同质量回复 |
-| FR-1.2 | 支持语音输入与语音回复（中英文混合） | P0 | 语音端到端延迟 < 2s，识别准确率 ≥ 95% |
+| FR-1.2 | 支持语音输入与语音回复（中英文混合） | P0 | 端到端首响应 < 2s（含"我在分析中"的 placeholder TTS）|
 | FR-1.3 | 支持文字输入与文字回复（含 Markdown / 卡片） | P0 | IM 卡片正常渲染，URL 可点击 |
-| FR-1.4 | 输出 HTML 分析页 URL（30 天有效） | P0 | URL 可在浏览器和 IM 内打开，过期后返回 403 |
+| FR-1.4 | 输出 HTML 分析页 URL（30 天有效） | P0 | URL 可在浏览器和 IM 内打开，过期返回 403 |
 
-### 3.2 智能编排 (P0)
+### 3.2 智能编排（6 个逻辑 Agent，DevOps Agent 作为引擎） (P0)
+
+| 逻辑 Agent | 职责 | 物理实现 / 引擎 |
+|---|---|---|
+| **Router** | 意图识别（巡检 / 排障 / 修复 / 经验查询） | Orchestrator Lambda 内 Bedrock LLM |
+| **Discovery** | 拉指标 / 日志 / 拓扑 / 事件 | DevOps Agent on-demand chat（核心）+ CloudWatch 直连（fallback） |
+| **Analysis** | 根因分析（只读） | DevOps Agent investigation（核心能力，94% 准确率） |
+| **Knowledge** | 经验沉淀 + 历史匹配 | DevOps Agent **Custom Skills** + 可选 Bedrock KB（兼容客户已有知识库） |
+| **Execution** | 用户确认后执行修复 | NLOps 独立 Execution Lambda（写操作隔离 + Confirm Token + Policy Guard）|
+| **Report** | 生成 HTML 分析页 | Orchestrator Lambda 内 Jinja2 + ECharts，写 S3 |
 
 | ID | 需求 | 优先级 | 验收标准 |
 |----|------|--------|---------|
-| FR-2.1 | Router Agent 识别用户意图（巡检 / 排障 / 修复 / 查询历史） | P0 | 意图识别准确率 ≥ 90% |
-| FR-2.2 | Discovery Agent 通过 CloudWatch MCP 拉取指标 / 日志 / 事件 | P0 | 支持 EC2 / ECS / RDS / Lambda / ALB 等核心服务 |
-| FR-2.3 | Analysis Agent 调用 DevOps Agent 做根因分析（只读） | P0 | 输出结构化结论：异常指标 + 根因 + 影响范围 + 建议 |
-| FR-2.4 | Execution Agent 在用户**显式确认**后执行修复（写权限受 Policy 约束） | P0 | 未确认不得执行；超出 Policy 范围的请求自动拦截并提示 |
-| FR-2.5 | Knowledge Agent 检索历史相似案例（Top-K + 相似度） | P0 | 相似度 > 85% 触发推荐复用，60-85% 仅供参考 |
-| FR-2.6 | Report Agent 生成 HTML 分析页（含图表 / 解读 / 建议 / 证据） | P0 | 分析页生成 < 5s，包含至少 1 张图表 + AI 解读 |
-| FR-2.7 | 多 Agent 并行执行（无依赖时） | P1 | Discovery 与 Knowledge 可并行 |
-| FR-2.8 | Agent 间可作为 Tool 互相调用（Agent-as-Tool） | P1 | 例：Analysis 调用 Knowledge 查历史案例 |
+| FR-2.1 | Router 识别用户意图，分发到对应 Agent 链路 | P0 | 意图识别准确率 ≥ 90% |
+| FR-2.2 | Discovery 通过 DevOps Agent on-demand chat 拉数据；DevOps Agent 不可达时降级到 CloudWatch 直连 | P0 | 双路径都能返回结构化结果 |
+| FR-2.3 | Analysis 调用 DevOps Agent investigation API，返回 RCA + 证据 + 修复建议 | P0 | 输出 root cause / impact / fix_steps / evidence 四字段 |
+| FR-2.4 | Execution 必须有 confirm_token + Policy 检查方可写 AWS API | P0 | 缺 token 自动拒绝；越权资源被拦截；全部写操作进 audit log |
+| FR-2.5 | Knowledge 把客户私有 runbook / 故障手册 注册为 DevOps Agent **Custom Skills** | P0 | 同一类故障第二次发生时，DevOps Agent 自动应用对应 Skill |
+| FR-2.6 | Report 把 DevOps Agent 输出转 HTML 诊断书（含图表 / 解读 / 建议 / 证据） | P0 | 报告 < 5s 生成，包含至少 1 图 + 文字解读 |
+| FR-2.7 | 平台暴露 NLOps MCP Server，把客户内部工具（工单系统 / 自研 APM / CMDB）作为 tool 提供给 DevOps Agent | P1 | DevOps Agent 调查时能调用我们暴露的 MCP tool |
+| FR-2.8 | EventBridge 订阅 DevOps Agent 自治调查事件（告警驱动场景），自动渲染 HTML 并推送 IM | P1 | CW 告警 → DevOps Agent 自动调查 → IM 卡片落地，全程无人工 |
 
 ### 3.3 经验闭环 (P0)
 
 | ID | 需求 | 优先级 | 验收标准 |
 |----|------|--------|---------|
 | FR-3.1 | 故障处理完成后自动生成结构化事件报告 | P0 | 含字段：时间线 / 根因 / 影响范围 / 修复步骤 / 验证结果 / 证据链 |
-| FR-3.2 | 事件报告自动向量化入库 Bedrock KB | P0 | 入库延迟 < 30s |
-| FR-3.3 | 下次相似请求自动语义检索匹配 | P0 | Top-K (K=3) 在 1s 内返回 |
-| FR-3.4 | 冷启动预置 AWS 常见故障案例 ≥ 50 条 | P1 | 部署完即可用 |
-| FR-3.5 | 1 年后自动转 Glacier 归档 | P2 | 通过 S3 lifecycle 实现 |
+| FR-3.2 | 事件报告自动注册为 DevOps Agent **Custom Skill**（替代原 KB 设计的部分能力） | P0 | 注册成功率 ≥ 99%，Skill 在调查中可被引用 |
+| FR-3.3 | 同时双写 Bedrock KB（兼容客户已有知识库 / 跨 Agent 共享） | P1 | KB 文档与 Skill 内容一致 |
+| FR-3.4 | 冷启动预置常见故障 Custom Skills（≥ 50 类） | P1 | 部署完即可命中常见 case |
 
 ### 3.4 分析页 / 报告 (P0)
 
@@ -73,8 +86,8 @@
 | FR-4.1 | 报告中包含数据图表（趋势 / 拓扑 / 火焰图） | P0 | 至少支持 ECharts 折线 / 柱状 / 热力 |
 | FR-4.2 | 报告中包含 AI 文字解读 | P0 | 每个关键指标至少 1 句解读 |
 | FR-4.3 | 报告中包含因果分析（时间线 + 关联事件） | P0 | 时间线按秒级排序 |
-| FR-4.4 | 报告中包含可执行操作建议 | P0 | 按优先级排序，标注风险等级 |
-| FR-4.5 | 报告中包含证据链（日志片段 / Trace ID） | P0 | 可点击跳转到原始数据源 |
+| FR-4.4 | 报告中包含可执行操作建议 | P0 | 按优先级排序，标注风险等级；可点击触发 Execution 流程 |
+| FR-4.5 | 报告中包含证据链（日志片段 / Trace ID / DevOps Agent investigation ID）| P0 | 可点击跳转到原始数据源 / DevOps Agent Operator Portal |
 | FR-4.6 | 支持对话式下钻（总览 → 聚焦 → 链路 → 代码） | P1 | 每次下钻生成独立 URL |
 
 ### 3.5 安全与合规 (P0)
@@ -84,7 +97,9 @@
 | FR-5.1 | Policy 护栏：Analysis 只读、Execution 写需确认 | P0 | 越权操作被拦截并审计 |
 | FR-5.2 | 所有用户输入 / Agent 决策 / 执行动作 全链路日志 | P0 | 日志保留 ≥ 90 天 |
 | FR-5.3 | S3 Presigned URL 默认 30 天过期 | P0 | URL 内不暴露明文凭证 |
-| FR-5.4 | IAM 最小权限：每个 Agent 独立 Role | P0 | 通过 IAM Access Analyzer 校验 |
+| FR-5.4 | IAM 最小权限：Orchestrator Lambda 只读 + Execution Lambda 独立写权限 | P0 | 通过 IAM Access Analyzer 校验 |
+| FR-5.5 | NLOps MCP Server 用 AWS SigV4 鉴权，DevOps Agent 服务主体 `aidevops.amazonaws.com` 可访问 | P0 | 验证 IAM trust policy 限定 sourceAccount + sourceArn |
+| FR-5.6 | Confirm Token 单次使用、5 分钟过期、绑定原会话 | P0 | 重放 / 过期 / 跨会话使用均被拒绝 |
 
 ---
 
@@ -92,15 +107,16 @@
 
 | 维度 | 指标 | 说明 |
 |------|------|------|
-| 性能 - 语音识别延迟 | < 500 ms | Nova Sonic 端到端流式 |
-| 性能 - 语音回复开始 | < 2 s | 流式输出，边分析边播报 |
-| 性能 - 分析页生成 | < 5 s | Agent → JSON → 模板 → S3 |
-| 性能 - Agent 决策 | < 3 s | 模型驱动路由 |
-| 性能 - 经验匹配 | < 1 s | KB 向量检索 |
+| 性能 - 语音 ASR 首响应 | < 500 ms | Nova Sonic 流式 |
+| 性能 - 语音"分析中"placeholder | < 2 s | 用户开口后即返回提示音；真正答案随后到达 |
+| 性能 - DevOps Agent investigation | 5-15 min | 由 DevOps Agent 自身决定，**不在 NLOps 控制范围**；用户期望需调整 |
+| 性能 - DevOps Agent on-demand chat | 5-30 s | 简单查询场景，可接受 |
+| 性能 - HTML 分析页生成 | < 5 s | 拿到 DevOps Agent 结果后渲染 |
+| 性能 - Knowledge Skill 注册 | < 30 s | 通过 DevOps Agent API 注册 |
 | 并发 | ≥ 50 并发用户 | Lambda 自动扩缩 |
 | 可用性 | ≥ 99.5 % | 全 Serverless，无单点 |
-| 可维护性 | Agent 可独立升级 | 每个 Agent 独立 Lambda + 版本别名 |
-| 成本 | ≤ $20 / 用户 / 月 | Bedrock 占大头，可切 Nova 降本 |
+| 可维护性 | Skills 可独立增减 | 通过 console 或 CLI 管理 |
+| 成本 | ≤ $20 / 用户 / 月（不含 DevOps Agent）| **DevOps Agent 单独按使用量计费 ~$30-60/用户/月**，可被 AWS Support 抵扣 |
 | 部署效率 | CDK 一键部署 ≤ 15 min | `cdk deploy` 全栈完成 |
 
 ---
@@ -108,18 +124,20 @@
 ## 5. 范围边界
 
 ### 5.1 包含 (In Scope)
-- 6 个 Agent 编排 + Policy 护栏
+- Orchestrator + Execution + EventBridge + MCP Server 4 Lambda
 - 语音 / 文字交互 + HTML 分析页
-- CloudWatch / X-Ray / DevOps Agent 数据接入
-- Bedrock KB 经验沉淀
+- DevOps Agent on-demand chat / investigation API 集成
+- DevOps Agent EventBridge 事件订阅
+- DevOps Agent Custom Skills 自动注册
+- NLOps 自暴露 MCP Server，提供客户内部工具
 - CDK 基础设施代码
 - 三个入口适配（Quick / 企微 / 飞书）
 
 ### 5.2 不包含 (Out of Scope)
-- 自定义指标采集（沿用 CloudWatch / 现有 APM）
-- 跨云厂商支持（仅 AWS）
+- 取代 DevOps Agent 自身的根因分析能力（不重复造轮子）
+- 跨云厂商支持（仅 AWS；DevOps Agent 自带的 Azure/on-prem 能力可用）
 - 工单系统集成（v1 先打通推送即可）
-- 中国区部署（v1 仅 us-east-1，后续视 Bedrock 进度评估）
+- **AWS 中国区部署（DevOps Agent 不在中国区，方案 v1 仅 us-east-1 / ap-northeast-1，中国客户需走全球区路径）**
 
 ---
 
@@ -127,21 +145,27 @@
 
 | # | 假设 / 风险 | 影响 | 应对 |
 |---|-------------|------|------|
-| 1 | Bedrock / AgentCore / Nova Sonic 在目标 region 已 GA | 高 | 锁定 us-east-1，预留备选 us-west-2 |
-| 2 | 客户已开启 CloudWatch 详细监控 | 中 | 部署时检查并提示开启 |
-| 3 | 企微 / 飞书 webhook 配额 | 低 | 限流 + 异步推送 |
-| 4 | LLM 输出不稳定（幻觉） | 中 | 关键字段强约束 JSON Schema + 重试 |
-| 5 | 写操作误执行 | 高 | 强制人工确认 + Policy 双重护栏 + 审计日志 |
-| 6 | 语音识别在嘈杂环境下准确率下降 | 中 | 提供"识别结果回显 + 文字纠正"路径 |
+| 1 | DevOps Agent 在 us-east-1 已 GA（确认） | 高 | 锁定 us-east-1 |
+| 2 | Bedrock / Nova Sonic 在同 region GA | 高 | us-east-1 全部满足 |
+| 3 | 客户已开启 CloudWatch 详细监控 | 中 | 部署时检查并提示开启 |
+| 4 | 企微 / 飞书 webhook 配额 | 低 | 限流 + 异步推送 |
+| 5 | DevOps Agent 调查耗时长（5-15 min） | 中 | 用 EventBridge 异步通知 + IM 卡片更新；用户体验需要预期管理 |
+| 6 | DevOps Agent 调用费用累积快（$0.0083/s） | 高 | 区分 chat vs investigation；只在必要时调用 investigation |
+| 7 | 写操作误执行 | 高 | Confirm Token + Policy + IAM 三重护栏 |
+| 8 | NLOps MCP Server 被 Prompt Injection 攻击 | 中 | 只暴露只读 tool；按 DevOps Agent 安全指南做 input 净化 |
+| 9 | 语音识别在嘈杂环境下准确率下降 | 中 | 提供"识别结果回显 + 文字纠正"路径 |
+| 10 | 中国区客户数据合规 | 高 | 明示 v1 数据进出全球区，让客户评估；中国区方案待 DevOps Agent 入华 |
 
 ---
 
 ## 7. 验收标准（端到端 Demo 场景）
 
-| 场景 | 输入 | 期望输出 |
-|------|------|---------|
-| 1. 早晨巡检 | 语音："早上好，系统今天怎么样？" | 健康总览 HTML 分析页 + 语音摘要 |
-| 2. 故障下钻 | 语音："order-service 延迟为什么涨了？" | 聚焦分析页（含根因 + 证据 + 建议） |
-| 3. 执行修复 | 语音："帮我扩容到 4 实例" | 风险确认卡片 → 用户确认 → 执行 → 结果回显 |
-| 4. 经验复用 | 语音："上次类似问题怎么解决的？" | Top-3 历史案例卡片 + 一键复用按钮 |
-| 5. 自动沉淀 | 修复完成后 | 事件报告自动入 KB（无需用户操作） |
+| 场景 | 输入 | 期望输出 | 涉及 Agent (逻辑) |
+|------|------|---------|------|
+| 1. 早晨巡检 | 语音："早上好，系统今天怎么样？" | 健康总览 HTML 分析页 + 语音摘要 | Router → Discovery → Report |
+| 2. 故障下钻 | 语音："order-service 延迟为什么涨了？" | 聚焦分析页（含根因 + 证据 + 建议）| Router → Discovery → Analysis → Report |
+| 3. 执行修复 | 语音："帮我扩容到 4 实例" | 风险确认卡片 → 用户确认 → 执行 → 结果回显 | Router → Execution（带 Confirm Token） |
+| 4. 经验复用 | 语音："上次类似问题怎么解决的？" | DevOps Agent 自动应用 Custom Skill 给出方案 | Router → Knowledge (DevOps Agent Skills) |
+| 5. 自动沉淀 | 修复完成后 | 事件报告自动注册为 Custom Skill；同时入 Bedrock KB（双写）| Knowledge |
+| 6. 告警驱动闭环 | CW 告警触发 → DevOps Agent 自动调查 | EventBridge 事件 → NLOps 渲染 HTML → 推送 IM | EventBridge handler → Report |
+| 7. 客户私有工具 | DevOps Agent 调查中需要查客户内部 CMDB | NLOps MCP Server 返回 CMDB 数据 | MCP Server (我们暴露的) |
