@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <title>🚨 自动调查完成 · payment-service 5xx 飙升</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    :root { --aws-orange: #ff9900; --aws-dark: #232f3e; --bg: #f7f7f7; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+                   "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg); color: #1d1d1d; margin: 0;
+    }
+    .wrap { max-width: 1024px; margin: 0 auto; padding: 24px; }
+    .header {
+      background: var(--aws-dark); color: white;
+      padding: 24px 32px; border-radius: 12px;
+    }
+    .header h1 { margin: 0 0 8px 0; font-size: 1.6em; }
+    .header .meta { opacity: 0.85; font-size: 0.9em; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 12px;
+             background: var(--aws-orange); font-size: 0.85em; margin-right: 6px; }
+    .card {
+      background: white; border-radius: 12px; padding: 20px 24px;
+      margin-top: 20px; box-shadow: 0 2px 6px rgba(0,0,0,.05);
+    }
+    .card h2 { margin-top: 0; font-size: 1.2em; color: var(--aws-dark); }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; }
+    .col { flex: 1; min-width: 280px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; }
+    th { background: #f3f3f3; }
+    .risk-low { color: #2e7d32; font-weight: 600; }
+    .risk-med { color: #ef6c00; font-weight: 600; }
+    .risk-high { color: #c62828; font-weight: 600; }
+    pre { background: #fafafa; padding: 12px; overflow-x: auto;
+          font-size: 0.85em; border-radius: 6px; }
+    .chart { width: 100%; height: 280px; }
+    .footer { text-align: center; margin: 30px 0 10px; color: #888; font-size: 0.85em; }
+    a { color: #0073bb; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="header">
+    <h1>🚨 自动调查完成 · payment-service 5xx 飙升</h1>
+    <div class="meta">
+      <span class="badge">alert_driven</span>
+      <span>报告 ID: demo-5</span>
+      &nbsp;·&nbsp;
+      <span>生成时间: 1779030661</span>
+      
+        &nbsp;·&nbsp;<span>DOA inv: task-2026-05-17-xyz</span>
+      
+      
+        &nbsp;·&nbsp;<span>严重度: <b>critical</b></span>
+      
+    </div>
+  </div>
+
+  
+  <div class="card">
+    <h2>📅 时间线</h2>
+    <table>
+      <thead><tr><th>时间</th><th>事件</th></tr></thead>
+      <tbody>
+        
+        <tr><td>2026-05-17T02:14:00Z</td><td>CloudWatch alarm 触发 (5xx &gt; 1%)</td></tr>
+        
+        <tr><td>2026-05-17T02:14:30Z</td><td>DOA 自动启动 investigation (无人工)</td></tr>
+        
+        <tr><td>2026-05-17T02:18:45Z</td><td>DOA 完成 — 根因: cert-mgr-* 证书过期</td></tr>
+        
+        <tr><td>2026-05-17T02:18:48Z</td><td>EventBridge 事件 -&gt; NLOps L3 Lambda</td></tr>
+        
+        <tr><td>2026-05-17T02:18:55Z</td><td>HTML 渲染 + IM 卡片推送值班群</td></tr>
+        
+      </tbody>
+    </table>
+  </div>
+  
+
+  
+  <div class="card">
+    <h2>🔬 根因分析</h2>
+    <p>上游 payment-gateway 的 mTLS 证书 (cert-mgr-prod-payment) 在 02:13 过期，请求被网关 reject。0.8% 支付请求 5xx。</p>
+  </div>
+  
+
+  
+
+  
+  <div class="card">
+    <h2>🛠️ 操作建议</h2>
+    <table>
+      <thead>
+        <tr><th>建议</th><th>风险</th><th>是否可自动</th></tr>
+      </thead>
+      <tbody>
+      
+        <tr>
+          <td>替换证书 (有 Skill 可复用 — 3 个月前同款故障)</td>
+          <td class="risk-low">low</td>
+          <td>✅</td>
+        </tr>
+      
+        <tr>
+          <td>把证书续期接入 ACM 自动 rotation</td>
+          <td class="risk-low">low</td>
+          <td>❌ 需评审</td>
+        </tr>
+      
+      </tbody>
+    </table>
+  </div>
+  
+
+  
+  <div class="card">
+    <h2>📎 证据链</h2>
+    
+      <p><strong>Trace IDs:</strong>
+        
+          <code>1-66a02000-....</code>
+        
+      </p>
+    
+    
+      <p><strong>日志片段:</strong></p>
+      <pre>02:13:58 ERROR mTLS handshake failed: certificate expired
+02:14:00 ALARM: payment-service-5xx-rate threshold exceeded
+</pre>
+    
+  </div>
+  
+
+  
+  <div class="card">
+    <h2>🔗 关联</h2>
+    <p>查看 AWS DevOps Agent Operator Portal:
+      <a href="https://us-east-1.console.aws.amazon.com/aidevops/spaces/space-001/tasks/task-2026-05-17-xyz" target="_blank">
+        task-2026-05-17-xyz →
+      </a>
+    </p>
+  </div>
+  
+
+  <div class="card">
+    <h2>原始数据 (JSON)</h2>
+    <pre>{
+  &#34;title&#34;: &#34;🚨 自动调查完成 · payment-service 5xx 飙升&#34;,
+  &#34;severity&#34;: &#34;critical&#34;,
+  &#34;investigation_id&#34;: &#34;task-2026-05-17-xyz&#34;,
+  &#34;operator_portal_url&#34;: &#34;https://us-east-1.console.aws.amazon.com/aidevops/spaces/space-001/tasks/task-2026-05-17-xyz&#34;,
+  &#34;timeline&#34;: [
+    {
+      &#34;ts&#34;: &#34;2026-05-17T02:14:00Z&#34;,
+      &#34;event&#34;: &#34;CloudWatch alarm 触发 (5xx &gt; 1%)&#34;
+    },
+    {
+      &#34;ts&#34;: &#34;2026-05-17T02:14:30Z&#34;,
+      &#34;event&#34;: &#34;DOA 自动启动 investigation (无人工)&#34;
+    },
+    {
+      &#34;ts&#34;: &#34;2026-05-17T02:18:45Z&#34;,
+      &#34;event&#34;: &#34;DOA 完成 — 根因: cert-mgr-* 证书过期&#34;
+    },
+    {
+      &#34;ts&#34;: &#34;2026-05-17T02:18:48Z&#34;,
+      &#34;event&#34;: &#34;EventBridge 事件 -&gt; NLOps L3 Lambda&#34;
+    },
+    {
+      &#34;ts&#34;: &#34;2026-05-17T02:18:55Z&#34;,
+      &#34;event&#34;: &#34;HTML 渲染 + IM 卡片推送值班群&#34;
+    }
+  ],
+  &#34;root_cause&#34;: &#34;上游 payment-gateway 的 mTLS 证书 (cert-mgr-prod-payment) 在 02:13 过期，请求被网关 reject。0.8% 支付请求 5xx。&#34;,
+  &#34;fix_steps&#34;: [
+    {
+      &#34;action&#34;: &#34;替换证书 (有 Skill 可复用 — 3 个月前同款故障)&#34;,
+      &#34;risk&#34;: &#34;low&#34;,
+      &#34;auto&#34;: true
+    },
+    {
+      &#34;action&#34;: &#34;把证书续期接入 ACM 自动 rotation&#34;,
+      &#34;risk&#34;: &#34;low&#34;,
+      &#34;auto&#34;: false
+    }
+  ],
+  &#34;evidence&#34;: {
+    &#34;trace_ids&#34;: [
+      &#34;1-66a02000-....&#34;
+    ],
+    &#34;log_snippets&#34;: [
+      &#34;02:13:58 ERROR mTLS handshake failed: certificate expired&#34;,
+      &#34;02:14:00 ALARM: payment-service-5xx-rate threshold exceeded&#34;
+    ]
+  }
+}</pre>
+  </div>
+
+  <div class="footer">
+    Generated by <strong>NLOps</strong> · powered by AWS DevOps Agent
+  </div>
+</div>
+
+
+</body>
+</html>
