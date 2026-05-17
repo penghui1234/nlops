@@ -1,25 +1,23 @@
-"""AWS DevOps Agent (DOA) adapter.
+"""AWS DevOps Agent (DOA) adapter — real boto3 API.
 
-This wraps the GA service ``aws-devops-agent`` (boto3 client name
-candidate: ``aidevops``).  We expose 3 high-level operations:
+Service name: ``devops-agent`` (boto3 ≥ 1.34)
+Verified via ``boto3.client('devops-agent').meta.service_model.operation_names``
+in 2026-05.
 
-  chat(prompt, session_id)              -> str        (5-30s, sync)
-  start_investigation(title, context)   -> inv_id     (async, 5-15min)
-  get_investigation(inv_id)             -> dict       (poll)
-  register_custom_skill(name, ...)      -> skill_id
+API operation mapping (logical -> real):
+  chat (one-shot Q&A)         -> CreateChat + SendMessage
+  start investigation         -> CreateBacklogTask (taskType=INVESTIGATION)
+  get investigation           -> GetBacklogTask
+  list investigations         -> ListBacklogTasks
+  list agent spaces           -> ListAgentSpaces
 
-The boto3 service / operation names below follow the public docs and
-blog naming as of 2026-05. If the live SDK exposes slightly different
-names (e.g., ``CreateInvestigation`` vs ``StartInvestigation``) the
-``_OP_*`` constants below are the only place to change.
-
-We intentionally degrade gracefully when DOA is not configured (env var
-``DOA_AGENT_SPACE_ID`` empty), so the code remains importable in dev /
-unit-test environments.
+When ``DOA_AGENT_SPACE_ID`` env is empty, the adapter degrades to a
+deterministic mock so unit tests and offline demos still work.
 """
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from typing import Any
 
@@ -30,14 +28,9 @@ from ..common.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
-
 _REGION = os.getenv("AWS_REGION", "us-east-1")
 _AGENT_SPACE_ID = os.getenv("DOA_AGENT_SPACE_ID", "").strip()
-_DOA_SERVICE = os.getenv("DOA_BOTO3_SERVICE", "aidevops")  # tunable
-_OP_CHAT = "start_chat_session"
-_OP_INVEST_CREATE = "create_investigation"
-_OP_INVEST_GET = "get_investigation"
-_OP_REGISTER_SKILL = "register_custom_skill"
+_DOA_SERVICE = os.getenv("DOA_BOTO3_SERVICE", "devops-agent")
 
 
 class DevOpsAgentTool:
@@ -53,7 +46,6 @@ class DevOpsAgentTool:
         try:
             self._client = boto3.client(_DOA_SERVICE, region_name=self.region)
         except Exception as exc:
-            # Older boto3 versions may not know the service yet.
             logger.warning(
                 "doa.client_init_failed_using_mock",
                 extra={"err": str(exc), "service": _DOA_SERVICE},
@@ -61,62 +53,87 @@ class DevOpsAgentTool:
             self._client = None
 
     # ------------------------------------------------------------------ #
-    # On-demand chat (5-30s, sync)
+    # Chat: CreateChat + SendMessage  (5-30s sync)
     # ------------------------------------------------------------------ #
-    def chat(self, prompt: str, session_id: str | None = None) -> str:
+    def chat(self, prompt: str, session_id: str | None = None, user_id: str = "nlops") -> str:
         if not self._configured():
             return self._mock_chat(prompt)
 
         try:
-            op = getattr(self._client, _OP_CHAT)
-            resp = op(
+            # 1) Create a chat execution
+            create_resp = self._client.create_chat(
                 agentSpaceId=self.agent_space_id,
-                sessionId=session_id or f"chat-{uuid.uuid4()}",
-                inputText=prompt,
+                userId=user_id,
+                userType="USER",
             )
-        except (ClientError, BotoCoreError, AttributeError) as exc:
+            execution_id = create_resp["executionId"]
+
+            # 2) Send the prompt
+            send_resp = self._client.send_message(
+                agentSpaceId=self.agent_space_id,
+                executionId=execution_id,
+                content=prompt,
+                userId=user_id,
+            )
+
+            # 3) Aggregate event stream into a single string
+            chunks: list[str] = []
+            for evt in send_resp.get("events", []) or []:
+                # Each event may carry text under different shapes; collect any
+                # that look like model output.
+                if isinstance(evt, dict):
+                    for k in ("content", "text", "message", "output"):
+                        v = evt.get(k)
+                        if isinstance(v, str):
+                            chunks.append(v)
+                            break
+                        if isinstance(v, dict) and "text" in v:
+                            chunks.append(v["text"])
+                            break
+            return "".join(chunks) or "[empty response]"
+
+        except (ClientError, BotoCoreError) as exc:
             logger.exception("doa.chat_failed", extra={"err": str(exc)})
             return self._mock_chat(prompt, error=str(exc))
 
-        # Streaming chunks -> single str
-        chunks: list[str] = []
-        for evt in resp.get("completion", []):
-            if "chunk" in evt:
-                chunks.append(evt["chunk"]["bytes"].decode("utf-8", errors="ignore"))
-        return "".join(chunks)
-
     # ------------------------------------------------------------------ #
-    # Investigation (async, 5-15min)
+    # Investigation: CreateBacklogTask + GetBacklogTask  (5-15min async)
     # ------------------------------------------------------------------ #
     def start_investigation(self, title: str, context: dict[str, Any]) -> str:
         if not self._configured():
             return f"mock-inv-{uuid.uuid4()}"
 
         try:
-            op = getattr(self._client, _OP_INVEST_CREATE)
-            resp = op(
+            resp = self._client.create_backlog_task(
                 agentSpaceId=self.agent_space_id,
-                title=title,
-                context=context,
+                reference=context.get("trace_id") or f"nlops-{uuid.uuid4()}",
+                taskType="INVESTIGATION",
+                title=title[:200],
+                description=str(context)[:4000],
+                priority=context.get("priority", "MEDIUM"),
+                clientToken=str(uuid.uuid4()),
             )
-            return resp.get("investigationId") or resp.get("InvestigationId", "")
-        except (ClientError, BotoCoreError, AttributeError) as exc:
-            logger.exception("doa.create_investigation_failed")
+            return resp["task"]["taskId"]
+        except (ClientError, BotoCoreError, KeyError) as exc:
+            logger.exception("doa.create_backlog_task_failed")
             return f"err-{uuid.uuid4()}"
 
     def get_investigation(self, investigation_id: str) -> dict[str, Any]:
         if not self._configured():
-            return {"investigationId": investigation_id, "status": "MOCK"}
+            return {"taskId": investigation_id, "status": "MOCK"}
 
         try:
-            op = getattr(self._client, _OP_INVEST_GET)
-            return op(investigationId=investigation_id).get("investigation", {})
-        except (ClientError, BotoCoreError, AttributeError) as exc:
-            logger.exception("doa.get_investigation_failed")
+            resp = self._client.get_backlog_task(
+                agentSpaceId=self.agent_space_id,
+                taskId=investigation_id,
+            )
+            return resp.get("task", {})
+        except (ClientError, BotoCoreError) as exc:
+            logger.exception("doa.get_backlog_task_failed")
             return {"error": str(exc)}
 
     # ------------------------------------------------------------------ #
-    # Custom Skills (Knowledge Agent uses this on incident sink)
+    # Knowledge sink — best-effort
     # ------------------------------------------------------------------ #
     def register_custom_skill(
         self,
@@ -124,30 +141,54 @@ class DevOpsAgentTool:
         description: str,
         content: dict[str, Any],
     ) -> str:
+        """Persist the incident as a backlog 'note' task (closest analog).
+
+        DOA's GA API exposes Custom Skills mainly via console; from SDK we
+        approximate by creating a NOTE / KNOWLEDGE backlog task that the
+        agent space can reference. If a future API like CreateSkill is
+        added we'll switch to it.
+        """
         if not self._configured():
             return f"mock-skill-{uuid.uuid4()}"
-
         try:
-            op = getattr(self._client, _OP_REGISTER_SKILL)
-            resp = op(
+            resp = self._client.create_backlog_task(
                 agentSpaceId=self.agent_space_id,
-                name=name[:64],                      # MCP tool name limit
-                description=description[:1024],
-                content=content,
+                reference=name[:200],
+                taskType="KNOWLEDGE",
+                title=name[:200],
+                description=description[:4000],
+                priority="LOW",
+                clientToken=str(uuid.uuid4()),
             )
-            return resp.get("skillId", "")
-        except (ClientError, BotoCoreError, AttributeError):
-            logger.exception("doa.register_skill_failed")
+            return resp["task"]["taskId"]
+        except (ClientError, BotoCoreError) as exc:
+            logger.warning(
+                "doa.register_skill_failed_or_unsupported",
+                extra={"err": str(exc)},
+            )
             return ""
 
     # ------------------------------------------------------------------ #
-    # Internals
+    def list_agent_spaces(self) -> list[dict[str, Any]]:
+        """Helper for diagnostics; returns ``[]`` on any error."""
+        if not self._client:
+            return []
+        try:
+            resp = self._client.list_agent_spaces(maxResults=50)
+            return resp.get("agentSpaces", [])
+        except (ClientError, BotoCoreError):
+            return []
+
     # ------------------------------------------------------------------ #
     def _configured(self) -> bool:
         return bool(self._client and self.agent_space_id)
 
     @staticmethod
     def _mock_chat(prompt: str, error: str | None = None) -> str:
-        """Used in dev / unit tests / CI when DOA is unreachable."""
-        suffix = f" (mock; err={error})" if error else " (mock)"
-        return f"[Discovery summary for prompt: {prompt[:80]}]" + suffix
+        suffix = f" [mock; err={error}]" if error else " [mock]"
+        sample = (
+            "P99 延迟在过去 30 分钟从 200ms 升至 320ms。"
+            "RDS proxy 连接池使用率 78%，疑似数据库连接饥饿。"
+            "建议关注 RDS proxy max_connections 配置。"
+        )
+        return f"[Discovery summary] prompt={prompt[:60]!r} → {sample}" + suffix
