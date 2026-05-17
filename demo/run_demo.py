@@ -35,7 +35,8 @@ from pathlib import Path
 
 # Make ``src`` importable as a top-level package
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT))                  # `from src.xxx import ...`
+sys.path.insert(0, str(ROOT / "src"))          # `from xxx import ...`  (Lambda style)
 
 # Force local-mode env BEFORE importing src.*
 os.environ.setdefault("DOA_AGENT_SPACE_ID", "")        # -> mock

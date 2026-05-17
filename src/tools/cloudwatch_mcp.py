@@ -11,7 +11,7 @@ from typing import Any
 
 import boto3
 
-from ..common.logging_utils import get_logger
+from common.logging_utils import get_logger
 
 logger = get_logger(__name__)
 _REGION = os.getenv("AWS_REGION", "us-east-1")

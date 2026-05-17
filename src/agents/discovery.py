@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..common.logging_utils import get_logger
-from ..common.policy import guard
-from ..tools.devops_agent import DevOpsAgentTool
-from ..tools.cloudwatch_mcp import CloudWatchTool
+from common.logging_utils import get_logger
+from common.policy import guard
+from tools.devops_agent import DevOpsAgentTool
+from tools.cloudwatch_mcp import CloudWatchTool
 from .base import Agent, AgentContext
 
 logger = get_logger(__name__)

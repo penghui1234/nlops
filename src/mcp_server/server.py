@@ -15,7 +15,7 @@ import json
 import os
 from typing import Any, Callable
 
-from ..common.logging_utils import get_logger
+from common.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

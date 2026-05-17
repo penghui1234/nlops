@@ -12,10 +12,10 @@ from typing import Any
 
 import boto3
 
-from ..common.audit import Audit
-from ..common.logging_utils import get_logger
-from ..report.generator import ReportGenerator
-from ..tools.devops_agent import DevOpsAgentTool
+from common.audit import Audit
+from common.logging_utils import get_logger
+from report.generator import ReportGenerator
+from tools.devops_agent import DevOpsAgentTool
 
 logger = get_logger(__name__)
 _REGION = os.getenv("AWS_REGION", "us-east-1")

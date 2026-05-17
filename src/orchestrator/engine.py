@@ -17,9 +17,9 @@ import asyncio
 import time
 from typing import Any
 
-from ..agents.base import Agent, AgentContext
-from ..common.audit import Audit
-from ..common.logging_utils import get_logger
+from agents.base import Agent, AgentContext
+from common.audit import Audit
+from common.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

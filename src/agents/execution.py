@@ -13,8 +13,8 @@ from typing import Any
 
 import boto3
 
-from ..common.logging_utils import get_logger
-from ..common.policy import guard
+from common.logging_utils import get_logger
+from common.policy import guard
 from .base import Agent, AgentContext
 
 logger = get_logger(__name__)

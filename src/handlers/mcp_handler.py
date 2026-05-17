@@ -8,9 +8,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ..common.audit import Audit
-from ..common.logging_utils import get_logger
-from ..mcp_server.private_tools import server  # registers tools
+from common.audit import Audit
+from common.logging_utils import get_logger
+from mcp_server.private_tools import server  # registers tools
 
 logger = get_logger(__name__)
 AUDIT = Audit()

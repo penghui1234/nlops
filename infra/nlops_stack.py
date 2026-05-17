@@ -130,7 +130,7 @@ class NLOpsStack(Stack):
             "AUDIT_TABLE": audit_table.table_name,
             "CONFIRM_TOKENS_TABLE": confirm_tokens_table.table_name,
             "NOTIFY_TOPIC_ARN": notify_topic.topic_arn,
-            "BEDROCK_MODEL_ID": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+            "BEDROCK_MODEL_ID": "moonshotai.kimi-k2.5",
             "BEDROCK_EMBED_MODEL": "amazon.titan-embed-text-v2:0",
             "DOA_AGENT_SPACE_ID": "REPLACE_AT_DEPLOY",  # Set via CDK context
             "LOG_LEVEL": "INFO",

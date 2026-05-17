@@ -24,7 +24,7 @@ from typing import Any
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-from ..common.logging_utils import get_logger
+from common.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

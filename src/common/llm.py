@@ -125,7 +125,21 @@ class LLM:
     # Internals — protocol shape differs per model family.
     # ------------------------------------------------------------------ #
     def _build_body(self, prompt: str, system: str | None) -> dict[str, Any]:
-        if "anthropic" in self.model_id:
+        # OpenAI-compatible Chat Completions (Kimi / Moonshot / etc.)
+        if any(k in self.model_id for k in ("moonshot", "kimi")):
+            messages = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append(
+                {"role": "user", "content": [{"type": "text", "text": prompt}]}
+            )
+            return {
+                "messages": messages,
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+            }
+        # Anthropic Claude
+        if "anthropic" in self.model_id or "claude" in self.model_id:
             body: dict[str, Any] = {
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": self.max_tokens,
@@ -146,6 +160,16 @@ class LLM:
 
     @staticmethod
     def _extract_text(payload: dict[str, Any]) -> str:
+        # OpenAI-compatible (Kimi / Moonshot)
+        if "choices" in payload:
+            choice = payload["choices"][0]
+            msg = choice.get("message") or {}
+            content = msg.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                return "".join(c.get("text", "") for c in content if isinstance(c, dict))
+            return ""
         if "content" in payload:  # Anthropic
             blocks = payload["content"]
             return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
@@ -157,6 +181,11 @@ class LLM:
 
     @staticmethod
     def _extract_stream_delta(data: dict[str, Any]) -> str:
+        # OpenAI-style streaming
+        if "choices" in data:
+            ch = data["choices"][0]
+            delta = ch.get("delta") or {}
+            return delta.get("content", "") or ""
         # Anthropic streaming
         if data.get("type") == "content_block_delta":
             return data["delta"].get("text", "")

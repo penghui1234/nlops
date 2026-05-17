@@ -6,7 +6,7 @@ import inspect
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..common.policy import GuardContext
+from common.policy import GuardContext
 
 
 @dataclass
