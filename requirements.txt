@@ -1,0 +1,19 @@
+# NLOps runtime dependencies (Python 3.12)
+# Pinned to mid-2026 stable releases.
+
+# AWS SDK
+boto3>=1.34.0,<2.0.0
+botocore>=1.34.0,<2.0.0
+
+# Templating
+Jinja2>=3.1.4,<4.0.0
+
+# Optional: real Strands SDK (we ship our own engine; uncomment to swap)
+# strands-agents>=0.10.0
+
+# Optional: MCP client (for path 4 mcp-in fallback)
+# mcp>=0.1.0
+
+# Dev / test only
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
