@@ -132,7 +132,7 @@ class NLOpsStack(Stack):
             "NOTIFY_TOPIC_ARN": notify_topic.topic_arn,
             "BEDROCK_MODEL_ID": "moonshotai.kimi-k2.5",
             "BEDROCK_EMBED_MODEL": "amazon.titan-embed-text-v2:0",
-            "DOA_AGENT_SPACE_ID": "REPLACE_AT_DEPLOY",  # Set via CDK context
+            "DOA_AGENT_SPACE_ID": "774d6ebc-e1c0-498b-853f-e28fc457142c",  # nlops-demo
             "LOG_LEVEL": "INFO",
         }
 
@@ -401,25 +401,36 @@ class NLOpsStack(Stack):
 
     @staticmethod
     def _doa_read_chat_policy() -> iam.PolicyStatement:
-        """Read & chat — used by Orchestrator (L1) and EB Subscriber (L3)."""
+        """Read & chat — used by Orchestrator (L1) and EB Subscriber (L3).
+
+        Real API operations (verified via boto3.client('devops-agent')
+        .meta.service_model.operation_names in 2026-05):
+          CreateChat / SendMessage / ListChats
+          GetBacklogTask / ListBacklogTasks
+          ListAgentSpaces / GetAgentSpace
+        """
         return iam.PolicyStatement(
             actions=[
-                "aidevops:StartChatSession",
-                "aidevops:GetChatSession",
-                "aidevops:ListChatSessions",
-                "aidevops:GetInvestigation",
-                "aidevops:ListInvestigations",
+                "aidevops:CreateChat",
+                "aidevops:SendMessage",
+                "aidevops:ListChats",
+                "aidevops:GetBacklogTask",
+                "aidevops:ListBacklogTasks",
+                "aidevops:ListAgentSpaces",
+                "aidevops:GetAgentSpace",
+                "aidevops:GetRecommendation",
+                "aidevops:ListRecommendations",
             ],
             resources=["*"],
         )
 
     @staticmethod
     def _doa_create_investigation_policy() -> iam.PolicyStatement:
-        """Create investigations — Orchestrator (L1) only."""
+        """Create backlog tasks (investigations / knowledge) — Orchestrator (L1) only."""
         return iam.PolicyStatement(
             actions=[
-                "aidevops:CreateInvestigation",
-                "aidevops:UpdateInvestigation",
+                "aidevops:CreateBacklogTask",
+                "aidevops:UpdateBacklogTask",
             ],
             resources=["*"],
         )

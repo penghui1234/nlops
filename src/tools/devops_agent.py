@@ -19,10 +19,12 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Any
 
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError, ReadTimeoutError
 
 from common.logging_utils import get_logger
 
@@ -31,6 +33,7 @@ logger = get_logger(__name__)
 _REGION = os.getenv("AWS_REGION", "us-east-1")
 _AGENT_SPACE_ID = os.getenv("DOA_AGENT_SPACE_ID", "").strip()
 _DOA_SERVICE = os.getenv("DOA_BOTO3_SERVICE", "devops-agent")
+_CHAT_TIMEOUT_SEC = int(os.getenv("DOA_CHAT_TIMEOUT_SEC", "20"))
 
 
 class DevOpsAgentTool:
@@ -44,7 +47,12 @@ class DevOpsAgentTool:
         self.agent_space_id = agent_space_id or _AGENT_SPACE_ID
         self.region = region or _REGION
         try:
-            self._client = boto3.client(_DOA_SERVICE, region_name=self.region)
+            cfg = Config(
+                read_timeout=_CHAT_TIMEOUT_SEC,
+                connect_timeout=5,
+                retries={"max_attempts": 1},
+            )
+            self._client = boto3.client(_DOA_SERVICE, region_name=self.region, config=cfg)
         except Exception as exc:
             logger.warning(
                 "doa.client_init_failed_using_mock",
@@ -53,48 +61,59 @@ class DevOpsAgentTool:
             self._client = None
 
     # ------------------------------------------------------------------ #
-    # Chat: CreateChat + SendMessage  (5-30s sync)
+    # Chat: CreateChat + SendMessage  (5-30s sync, with hard timeout)
     # ------------------------------------------------------------------ #
     def chat(self, prompt: str, session_id: str | None = None, user_id: str = "nlops") -> str:
         if not self._configured():
             return self._mock_chat(prompt)
 
+        # Use a thread with hard timeout so we never block the Lambda longer
+        # than _CHAT_TIMEOUT_SEC. DOA's event-stream iteration can block if
+        # the Agent Space has no associated services.
         try:
-            # 1) Create a chat execution
-            create_resp = self._client.create_chat(
-                agentSpaceId=self.agent_space_id,
-                userId=user_id,
-                userType="USER",
-            )
-            execution_id = create_resp["executionId"]
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                fut = pool.submit(self._do_chat, prompt, user_id)
+                return fut.result(timeout=_CHAT_TIMEOUT_SEC)
+        except FutureTimeoutError:
+            logger.warning("doa.chat_hard_timeout", extra={"deadline_s": _CHAT_TIMEOUT_SEC})
+            return self._mock_chat(prompt, error=f"DOA timeout > {_CHAT_TIMEOUT_SEC}s; check Agent Space services")
+        except Exception as exc:
+            logger.exception("doa.chat_failed")
+            return self._mock_chat(prompt, error=str(exc)[:120])
 
-            # 2) Send the prompt
-            send_resp = self._client.send_message(
-                agentSpaceId=self.agent_space_id,
-                executionId=execution_id,
-                content=prompt,
-                userId=user_id,
-            )
+    def _do_chat(self, prompt: str, user_id: str) -> str:
+        # 1) Create a chat execution
+        create_resp = self._client.create_chat(
+            agentSpaceId=self.agent_space_id,
+            userId=user_id,
+            userType="STATIC",
+        )
+        execution_id = create_resp["executionId"]
 
-            # 3) Aggregate event stream into a single string
-            chunks: list[str] = []
-            for evt in send_resp.get("events", []) or []:
-                # Each event may carry text under different shapes; collect any
-                # that look like model output.
-                if isinstance(evt, dict):
-                    for k in ("content", "text", "message", "output"):
-                        v = evt.get(k)
-                        if isinstance(v, str):
-                            chunks.append(v)
-                            break
-                        if isinstance(v, dict) and "text" in v:
-                            chunks.append(v["text"])
-                            break
-            return "".join(chunks) or "[empty response]"
+        # 2) Send the prompt
+        send_resp = self._client.send_message(
+            agentSpaceId=self.agent_space_id,
+            executionId=execution_id,
+            content=prompt,
+            userId=user_id,
+        )
 
-        except (ClientError, BotoCoreError) as exc:
-            logger.exception("doa.chat_failed", extra={"err": str(exc)})
-            return self._mock_chat(prompt, error=str(exc))
+        # 3) Aggregate event stream into a single string
+        chunks: list[str] = []
+        for evt in send_resp.get("events", []) or []:
+            if isinstance(evt, dict):
+                for k in ("content", "text", "message", "output"):
+                    v = evt.get(k)
+                    if isinstance(v, str):
+                        chunks.append(v)
+                        break
+                    if isinstance(v, dict) and "text" in v:
+                        chunks.append(v["text"])
+                        break
+        text = "".join(chunks)
+        if not text:
+            raise RuntimeError("DOA returned no content (Agent Space likely has no services associated)")
+        return text
 
     # ------------------------------------------------------------------ #
     # Investigation: CreateBacklogTask + GetBacklogTask  (5-15min async)
