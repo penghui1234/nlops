@@ -337,6 +337,20 @@ class NLOpsStack(Stack):
             authorization_type=apigw.AuthorizationType.NONE,
         )
 
+        # Same Lambda; alternative path so a Quick Desktop integration that
+        # cached a failed initial state on /mcp-public can be added again
+        # under a different URL and re-handshake from scratch.
+        mcp_quick = mcp_api.root.add_resource("mcp-quick")
+        mcp_quick.add_method("POST", authorization_type=apigw.AuthorizationType.NONE)
+        mcp_quick.add_method("GET", authorization_type=apigw.AuthorizationType.NONE)
+        mcp_quick.add_method("OPTIONS", authorization_type=apigw.AuthorizationType.NONE)
+
+        # SSE-style alias since some MCP clients expect /sse in the URL
+        mcp_sse = mcp_api.root.add_resource("sse")
+        mcp_sse.add_method("POST", authorization_type=apigw.AuthorizationType.NONE)
+        mcp_sse.add_method("GET", authorization_type=apigw.AuthorizationType.NONE)
+        mcp_sse.add_method("OPTIONS", authorization_type=apigw.AuthorizationType.NONE)
+
         # IAM Role that DevOps Agent will assume to call our MCP Server
         # The trust policy lets aidevops.amazonaws.com sts:AssumeRole this role,
         # with confused-deputy guards.

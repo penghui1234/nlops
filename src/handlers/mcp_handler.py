@@ -30,13 +30,59 @@ _CORS_HEADERS = {
 def handler(event: dict, context) -> dict:
     trace_id = event.get("requestContext", {}).get("requestId") or "trc-mcp-unknown"
     method = (event.get("httpMethod") or "").upper()
+    headers_in = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+    accept = (headers_in.get("accept") or "").lower()
+
+    # Detailed debug: what did the client actually send?
+    logger.info(
+        "mcp.request_received",
+        extra={
+            "http_method": method,
+            "path": event.get("path"),
+            "client_accept": accept,
+            "client_session": headers_in.get("mcp-session-id"),
+            "client_user_agent": headers_in.get("user-agent"),
+            "body_preview": (event.get("body") or "")[:500],
+        },
+    )
+
+    # Echo / generate a session id (MCP Streamable HTTP convention)
+    session_id = headers_in.get("mcp-session-id") or trace_id
 
     # CORS preflight
     if method == "OPTIONS":
-        return _resp(200, {}, body_str="")
+        return _resp(200, {}, body_str="", session_id=session_id)
 
-    # GET — allow simple health probe / serverInfo (some MCP clients try GET first)
+    # GET — clients (Quick Desktop / mcp-inspector) use this to open the
+    # SSE stream that delivers JSON-RPC responses asynchronously.
+    # Per MCP Streamable HTTP spec: when client sends Accept: text/event-stream
+    # we MUST return text/event-stream content-type.
     if method == "GET":
+        if "text/event-stream" in accept:
+            # Open an SSE channel. We don't have async events to push for
+            # this tool-only server, but we must keep the response format
+            # SSE so the client treats the connection as established.
+            # Lambda+API Gateway can't keep a long-lived stream; we send a
+            # comment line and close — most clients accept this and will
+            # POST their JSON-RPC requests to the same URL afterward.
+            sse_body = (
+                ": stream opened\n"
+                f"event: endpoint\n"
+                f"data: {event.get('path','/mcp-quick')}\n\n"
+            )
+            return {
+                "statusCode": 200,
+                "headers": {
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache, no-store",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                    "Mcp-Session-Id": session_id,
+                    **_CORS_HEADERS,
+                },
+                "body": sse_body,
+            }
+        # Plain GET (no SSE) — return server info as JSON
         return _resp(
             200,
             {
@@ -49,6 +95,7 @@ def handler(event: dict, context) -> dict:
                     "tools_count": len(server._tools),
                 },
             },
+            session_id=session_id,
         )
 
     # POST — JSON-RPC
@@ -57,7 +104,7 @@ def handler(event: dict, context) -> dict:
         try:
             body = json.loads(body)
         except json.JSONDecodeError:
-            return _resp(400, {"error": "invalid json"})
+            return _resp(400, {"error": "invalid json"}, session_id=session_id)
     body = body or {}
 
     rpc_method = body.get("method", "")
@@ -68,19 +115,45 @@ def handler(event: dict, context) -> dict:
         "McpServer",
         rpc_method or "unknown",
         "ok" if (response is None or "error" not in response) else "error",
-        {"id": body.get("id")},
+        {"id": body.get("id"), "session_id": session_id},
     )
 
-    # Notifications return None — respond 204 No Content (still with CORS headers)
+    # Notifications return None — respond 202 Accepted (MCP convention)
     if response is None:
-        return _resp(204, None, body_str="")
+        return _resp(202, None, body_str="", session_id=session_id)
 
-    return _resp(200, response)
+    # If client asked for SSE, wrap response as a single SSE event
+    if "text/event-stream" in accept:
+        payload = json.dumps(response, ensure_ascii=False)
+        sse_body = f"event: message\ndata: {payload}\n\n"
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache, no-store",
+                "Mcp-Session-Id": session_id,
+                **_CORS_HEADERS,
+            },
+            "body": sse_body,
+        }
+
+    # Log what we're returning
+    logger.info(
+        "mcp.response",
+        extra={"method": rpc_method, "result_keys": list(response.get("result", {}).keys()) if "result" in response else None},
+    )
+    return _resp(200, response, session_id=session_id)
 
 
-def _resp(status: int, body: Any, body_str: str | None = None) -> dict:
+def _resp(status: int, body: Any, body_str: str | None = None, session_id: str | None = None) -> dict:
+    headers = {
+        "Content-Type": "application/json",
+        **_CORS_HEADERS,
+    }
+    if session_id:
+        headers["Mcp-Session-Id"] = session_id
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "application/json", **_CORS_HEADERS},
+        "headers": headers,
         "body": body_str if body_str is not None else json.dumps(body, ensure_ascii=False),
     }
