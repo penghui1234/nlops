@@ -324,6 +324,19 @@ class NLOpsStack(Stack):
             authorization_type=apigw.AuthorizationType.IAM,
         )
 
+        # Additional /mcp-public resource with NO auth — for Amazon Quick Suite
+        # which only supports OAuth or No Auth (no SigV4). Demo-only;
+        # production should add OAuth (Cognito) or remove this method.
+        mcp_public = mcp_api.root.add_resource("mcp-public")
+        mcp_public.add_method(
+            "POST",
+            authorization_type=apigw.AuthorizationType.NONE,
+        )
+        mcp_public.add_method(
+            "GET",
+            authorization_type=apigw.AuthorizationType.NONE,
+        )
+
         # IAM Role that DevOps Agent will assume to call our MCP Server
         # The trust policy lets aidevops.amazonaws.com sts:AssumeRole this role,
         # with confused-deputy guards.
