@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# CDK
+.cdk.staging/
+cdk.out/
+*.swp
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / secrets
+*.log
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+
+# Build artifacts
+dist/
+build/
+*.egg
+
+# Local data
+local_data/
+seed-knowledge.local.jsonl
