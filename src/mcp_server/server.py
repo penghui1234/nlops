@@ -73,14 +73,35 @@ class McpServer:
         }
 
     # ------------------------------------------------------------------ #
-    def handle(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Handle one JSON-RPC request."""
+    def handle(self, body: dict[str, Any]) -> dict[str, Any] | None:
+        """Handle one JSON-RPC request.
+
+        Returns ``None`` for notifications (no response expected).
+        """
         rpc_id = body.get("id")
         method = body.get("method", "")
         params = body.get("params") or {}
 
+        # Notifications (no id, no response)
+        if method.startswith("notifications/"):
+            logger.info("mcp.notification", extra={"method": method})
+            return None
+
         try:
-            if method == "tools/list":
+            if method == "initialize":
+                result = {
+                    "protocolVersion": params.get("protocolVersion", "2024-11-05"),
+                    "capabilities": {
+                        "tools": {"listChanged": False},
+                    },
+                    "serverInfo": {
+                        "name": "NLOps Private Tools",
+                        "version": "1.0.0",
+                    },
+                }
+            elif method == "ping":
+                result = {}
+            elif method == "tools/list":
                 result = self.list_tools()
             elif method == "tools/call":
                 tool_name = params.get("name", "")
