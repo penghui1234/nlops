@@ -49,7 +49,7 @@ def handler(event: dict, context) -> dict:
     # ---- ASR if voice ------------------------------------------------- #
     user_text: str = body.get("text", "")
     if path.endswith("/voice") and body.get("audio_b64"):
-        from ..voice.nova_sonic import NovaSonic
+        from voice.nova_sonic import NovaSonic
         user_text = NovaSonic().transcribe_b64(body["audio_b64"])
         logger.info("api.asr_done", extra={"trace_id": trace_id, "len": len(user_text)})
 

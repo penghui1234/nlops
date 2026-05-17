@@ -123,9 +123,16 @@ class DevOpsAgentTool:
             return f"mock-inv-{uuid.uuid4()}"
 
         try:
+            ref_id = context.get("trace_id") or f"nlops-{uuid.uuid4()}"
             resp = self._client.create_backlog_task(
                 agentSpaceId=self.agent_space_id,
-                reference=context.get("trace_id") or f"nlops-{uuid.uuid4()}",
+                reference={
+                    "system": "NLOps",
+                    "title": title[:200],
+                    "referenceId": ref_id,
+                    "referenceUrl": f"https://nlops.local/trace/{ref_id}",
+                    "associationId": context.get("association_id", "nlops-default"),
+                },
                 taskType="INVESTIGATION",
                 title=title[:200],
                 description=str(context)[:4000],
@@ -172,7 +179,13 @@ class DevOpsAgentTool:
         try:
             resp = self._client.create_backlog_task(
                 agentSpaceId=self.agent_space_id,
-                reference=name[:200],
+                reference={
+                    "system": "NLOps",
+                    "title": name[:200],
+                    "referenceId": name[:200],
+                    "referenceUrl": f"https://nlops.local/skill/{name[:200]}",
+                    "associationId": "nlops-knowledge",
+                },
                 taskType="KNOWLEDGE",
                 title=name[:200],
                 description=description[:4000],

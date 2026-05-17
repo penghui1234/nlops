@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 _REGION = os.getenv("AWS_REGION", "us-east-1")
 _NOVA_SONIC_MODEL = os.getenv(
     "NOVA_SONIC_MODEL_ID",
-    "amazon.nova-sonic-v1:0",
+    "amazon.nova-2-sonic-v1:0",
 )
 
 
