@@ -1,44 +1,67 @@
-"""NLOps CDK Stack.
+"""NLOps CDK Stack (v2).
 
-Provisions:
-  * API Gateway (REST) with /chat /voice /webhook
-  * Entry Lambda (router/dispatcher)
-  * Six Agent Lambdas (Router/Discovery/Analysis/Execution/Knowledge/Report)
-  * S3 bucket for HTML reports (lifecycle to IA -> Glacier)
-  * DynamoDB tables: sessions (TTL), audit (TTL)
-  * SNS topic for notifications
-  * IAM roles - one per Agent, least privilege
+Architecture (see docs/02-design.md §1.2):
+
+  L1 Orchestrator Lambda
+    - Entry point for caller API GW
+    - Strands SDK in-process orchestration of 5 logical Tools:
+      Router / Discovery / Analysis / Knowledge / Report
+    - Calls AWS DevOps Agent (chat / investigation)
+    - Invokes L2 cross-Lambda for write actions
+
+  L2 Execution Lambda
+    - Independent IAM (write boundary)
+    - Validates Confirm Token (DDB) + Policy
+    - Calls AWS resource APIs (ECS/EC2/RDS/...) under tag boundary
+
+  L3 EventBridge Subscriber Lambda
+    - Subscribes to 'aws.aidevops' source events
+    - Renders HTML diagnostic page, pushes IM card
+
+  L4 MCP Server Lambda
+    - Exposes customer's private tools as MCP Server (for DevOps Agent)
+    - Behind a separate API Gateway with AWS_IAM (SigV4) auth
+
+Plus:
+  - 1 caller-facing API Gateway (Quick / WeCom / Feishu webhooks)
+  - 1 MCP API Gateway
+  - S3 bucket (reports + KB sink)
+  - 3 DynamoDB tables: sessions / audit / confirm-tokens
+  - SNS topic for notifications
+  - EventBridge Rule for DevOps Agent investigation events
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 from aws_cdk import (
+    CfnOutput,
     Duration,
     RemovalPolicy,
     Stack,
 )
 from aws_cdk import aws_apigateway as apigw
 from aws_cdk import aws_dynamodb as ddb
+from aws_cdk import aws_events as events
+from aws_cdk import aws_events_targets as targets
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_sns as sns
 from constructs import Construct
 
-# Path to the src/ directory (sibling of infra/)
 SRC_DIR = Path(__file__).resolve().parent.parent / "src"
 
 
 class NLOpsStack(Stack):
-    """Main stack for the NLOps platform."""
+    """v2 stack: 4 Lambdas + DevOps Agent integration."""
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        # ------------------------------------------------------------------ #
-        # 1. Storage layer
-        # ------------------------------------------------------------------ #
+        # ============================================================== #
+        # 1. Storage
+        # ============================================================== #
         report_bucket = s3.Bucket(
             self,
             "ReportBucket",
@@ -80,122 +103,194 @@ class NLOpsStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # ------------------------------------------------------------------ #
-        # 2. Notification topic
-        # ------------------------------------------------------------------ #
-        notify_topic = sns.Topic(self, "NotifyTopic", display_name="NLOps Notifications")
+        confirm_tokens_table = ddb.Table(
+            self,
+            "ConfirmTokensTable",
+            partition_key=ddb.Attribute(name="token", type=ddb.AttributeType.STRING),
+            billing_mode=ddb.BillingMode.PAY_PER_REQUEST,
+            time_to_live_attribute="ttl",
+            removal_policy=RemovalPolicy.DESTROY,
+        )
 
-        # ------------------------------------------------------------------ #
-        # 3. Common Lambda layer / shared env
-        # ------------------------------------------------------------------ #
+        # ============================================================== #
+        # 2. Notifications
+        # ============================================================== #
+        notify_topic = sns.Topic(
+            self,
+            "NotifyTopic",
+            display_name="NLOps Notifications",
+        )
+
+        # ============================================================== #
+        # 3. Common environment
+        # ============================================================== #
         common_env = {
             "REPORT_BUCKET": report_bucket.bucket_name,
             "SESSIONS_TABLE": sessions_table.table_name,
             "AUDIT_TABLE": audit_table.table_name,
+            "CONFIRM_TOKENS_TABLE": confirm_tokens_table.table_name,
             "NOTIFY_TOPIC_ARN": notify_topic.topic_arn,
             "BEDROCK_MODEL_ID": "anthropic.claude-3-5-sonnet-20241022-v2:0",
             "BEDROCK_EMBED_MODEL": "amazon.titan-embed-text-v2:0",
+            "DOA_AGENT_SPACE_ID": "REPLACE_AT_DEPLOY",  # Set via CDK context
             "LOG_LEVEL": "INFO",
         }
 
         code_asset = lambda_.Code.from_asset(str(SRC_DIR))
 
-        # ------------------------------------------------------------------ #
-        # 4. Agent Lambdas (one per Agent, distinct IAM roles)
-        # ------------------------------------------------------------------ #
-        agents = {}
-        agent_specs = [
-            ("Router",    "agents.router.handler",    self._router_policies()),
-            ("Discovery", "agents.discovery.handler", self._discovery_policies()),
-            ("Analysis",  "agents.analysis.handler",  self._analysis_policies()),
-            ("Execution", "agents.execution.handler", self._execution_policies()),
-            ("Knowledge", "agents.knowledge.handler", self._knowledge_policies()),
-            ("Report",    "agents.report.handler",    self._report_policies(report_bucket)),
-        ]
-
-        for name, handler, policies in agent_specs:
-            role = iam.Role(
-                self,
-                f"{name}AgentRole",
-                assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
-                managed_policies=[
-                    iam.ManagedPolicy.from_aws_managed_policy_name(
-                        "service-role/AWSLambdaBasicExecutionRole"
-                    )
-                ],
-            )
-            for stmt in policies:
-                role.add_to_policy(stmt)
-
-            fn = lambda_.Function(
-                self,
-                f"{name}AgentFn",
-                runtime=lambda_.Runtime.PYTHON_3_12,
-                handler=handler,
-                code=code_asset,
-                timeout=Duration.seconds(60),
-                memory_size=512,
-                role=role,
-                environment=common_env,
-            )
-            agents[name] = fn
-
-        # Allow Router to invoke all sub-agents
-        for sub_name, sub_fn in agents.items():
-            if sub_name == "Router":
-                continue
-            sub_fn.grant_invoke(agents["Router"])
-
-        # Knowledge can be invoked by Analysis (Agent-as-Tool example)
-        agents["Knowledge"].grant_invoke(agents["Analysis"])
-
-        # ------------------------------------------------------------------ #
-        # 5. Entry Lambda
-        # ------------------------------------------------------------------ #
-        entry_role = iam.Role(
-            self,
-            "EntryRole",
-            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
-            managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name(
-                    "service-role/AWSLambdaBasicExecutionRole"
-                )
+        # ============================================================== #
+        # 4. L1 Orchestrator Lambda (entry + Strands SDK in-proc agents)
+        # ============================================================== #
+        orchestrator_role = self._make_role(
+            "OrchestratorRole",
+            extra_policies=[
+                self._bedrock_policy(),
+                self._doa_read_chat_policy(),
+                self._doa_create_investigation_policy(),
             ],
         )
-        sessions_table.grant_read_write_data(entry_role)
-        audit_table.grant_write_data(entry_role)
-        notify_topic.grant_publish(entry_role)
-        agents["Router"].grant_invoke(entry_role)
-        # Nova Sonic + Bedrock for ASR/TTS
-        entry_role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
-                resources=["*"],
-            )
-        )
+        sessions_table.grant_read_write_data(orchestrator_role)
+        audit_table.grant_write_data(orchestrator_role)
+        confirm_tokens_table.grant_read_write_data(orchestrator_role)
+        notify_topic.grant_publish(orchestrator_role)
+        report_bucket.grant_put(orchestrator_role)
+        report_bucket.grant_read(orchestrator_role)
 
-        entry_fn = lambda_.Function(
+        orchestrator_fn = lambda_.Function(
             self,
-            "EntryFn",
+            "OrchestratorFn",
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="handlers.api_handler.handler",
             code=code_asset,
+            timeout=Duration.seconds(60),
+            memory_size=1024,
+            role=orchestrator_role,
+            environment=common_env,
+        )
+
+        # ============================================================== #
+        # 5. L2 Execution Lambda (write isolation)
+        # ============================================================== #
+        execution_role = self._make_role("ExecutionRole")
+        execution_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "ecs:UpdateService",
+                    "ecs:DescribeServices",
+                    "autoscaling:SetDesiredCapacity",
+                    "autoscaling:UpdateAutoScalingGroup",
+                    "rds:RebootDBInstance",
+                    "rds:ModifyDBProxy",
+                    "rds:DescribeDBProxies",
+                    "ec2:RebootInstances",
+                    "ec2:DescribeInstances",
+                ],
+                resources=["*"],
+                conditions={
+                    "StringEquals": {
+                        "aws:ResourceTag/nlops:managed": "true",
+                    }
+                },
+            )
+        )
+        confirm_tokens_table.grant_read_write_data(execution_role)
+        audit_table.grant_write_data(execution_role)
+
+        execution_fn = lambda_.Function(
+            self,
+            "ExecutionFn",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="handlers.execution_handler.handler",
+            code=code_asset,
+            timeout=Duration.seconds(60),
+            memory_size=512,
+            role=execution_role,
+            environment=common_env,
+        )
+        # Allow L1 Orchestrator to invoke L2 Execution
+        execution_fn.grant_invoke(orchestrator_role)
+        # Pass execution function name to L1 via env
+        orchestrator_fn.add_environment("EXECUTION_FN_NAME", execution_fn.function_name)
+
+        # ============================================================== #
+        # 6. L3 EventBridge Subscriber (DOA investigation events)
+        # ============================================================== #
+        ebsub_role = self._make_role(
+            "EventBridgeSubscriberRole",
+            extra_policies=[
+                self._bedrock_policy(),
+                iam.PolicyStatement(
+                    actions=[
+                        "aidevops:GetInvestigation",
+                        "aidevops:GetEvaluation",
+                        "aidevops:ListInvestigations",
+                    ],
+                    resources=["*"],
+                ),
+            ],
+        )
+        report_bucket.grant_put(ebsub_role)
+        notify_topic.grant_publish(ebsub_role)
+        audit_table.grant_write_data(ebsub_role)
+
+        ebsub_fn = lambda_.Function(
+            self,
+            "EventBridgeSubscriberFn",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="handlers.eventbridge_handler.handler",
+            code=code_asset,
+            timeout=Duration.seconds(60),
+            memory_size=512,
+            role=ebsub_role,
+            environment=common_env,
+        )
+
+        # EventBridge rule: subscribe to DevOps Agent investigation events
+        events.Rule(
+            self,
+            "DOAInvestigationRule",
+            event_pattern=events.EventPattern(
+                source=["aws.aidevops"],
+                detail_type=[
+                    "Investigation Completed",
+                    "Investigation Updated",
+                    "Evaluation Completed",
+                ],
+            ),
+            targets=[targets.LambdaFunction(ebsub_fn)],
+        )
+
+        # ============================================================== #
+        # 7. L4 MCP Server Lambda (exposes customer tools to DOA)
+        # ============================================================== #
+        mcp_role = self._make_role("McpServerRole")
+        # NLOps MCP Server should NOT have AWS resource permissions.
+        # It only proxies to customer's internal endpoints (CMDB / Jira / APM).
+        # Customer wires VPC link / Private Connection via parameters.
+        audit_table.grant_write_data(mcp_role)
+
+        mcp_fn = lambda_.Function(
+            self,
+            "McpServerFn",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="handlers.mcp_handler.handler",
+            code=code_asset,
             timeout=Duration.seconds(30),
             memory_size=256,
-            role=entry_role,
+            role=mcp_role,
             environment={
                 **common_env,
-                "ROUTER_AGENT_FN": agents["Router"].function_name,
+                "MCP_TOOLS_ALLOWLIST": "get_service_owner,get_recent_jira_tickets,get_internal_apm_metric",
             },
         )
 
-        # ------------------------------------------------------------------ #
-        # 6. API Gateway
-        # ------------------------------------------------------------------ #
-        api = apigw.LambdaRestApi(
+        # ============================================================== #
+        # 8. Caller-facing API Gateway  (/chat /voice /webhook)
+        # ============================================================== #
+        caller_api = apigw.LambdaRestApi(
             self,
-            "NLOpsApi",
-            handler=entry_fn,
+            "CallerApi",
+            handler=orchestrator_fn,
             proxy=False,
             deploy_options=apigw.StageOptions(
                 stage_name="prod",
@@ -205,20 +300,93 @@ class NLOpsStack(Stack):
             ),
         )
         for path in ("chat", "voice", "webhook"):
-            api.root.add_resource(path).add_method("POST")
+            caller_api.root.add_resource(path).add_method("POST")
 
-        # ------------------------------------------------------------------ #
-        # 7. CloudFormation Outputs
-        # ------------------------------------------------------------------ #
-        from aws_cdk import CfnOutput
+        # ============================================================== #
+        # 9. MCP API Gateway (DOA -> NLOps MCP server, SigV4)
+        # ============================================================== #
+        mcp_api = apigw.LambdaRestApi(
+            self,
+            "McpApi",
+            handler=mcp_fn,
+            proxy=False,
+            deploy_options=apigw.StageOptions(
+                stage_name="prod",
+                throttling_burst_limit=50,
+                throttling_rate_limit=25,
+                metrics_enabled=True,
+            ),
+        )
+        # Single /mcp resource with AWS_IAM auth (SigV4)
+        mcp_resource = mcp_api.root.add_resource("mcp")
+        mcp_resource.add_method(
+            "POST",
+            authorization_type=apigw.AuthorizationType.IAM,
+        )
 
-        CfnOutput(self, "ApiUrl", value=api.url)
+        # IAM Role that DevOps Agent will assume to call our MCP Server
+        # The trust policy lets aidevops.amazonaws.com sts:AssumeRole this role,
+        # with confused-deputy guards.
+        doa_invoke_role = iam.Role(
+            self,
+            "DOAInvokeMcpRole",
+            assumed_by=iam.ServicePrincipal(
+                "aidevops.amazonaws.com",
+                conditions={
+                    "StringEquals": {"aws:SourceAccount": self.account},
+                    "ArnLike": {
+                        "aws:SourceArn": f"arn:aws:aidevops:{self.region}:{self.account}:agent-space/*"
+                    },
+                },
+            ),
+            description="Role assumed by AWS DevOps Agent to call NLOps MCP Server",
+        )
+        doa_invoke_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["execute-api:Invoke"],
+                resources=[
+                    self.format_arn(
+                        service="execute-api",
+                        resource=mcp_api.rest_api_id,
+                        resource_name="prod/POST/mcp",
+                    )
+                ],
+            )
+        )
+
+        # ============================================================== #
+        # 10. Outputs
+        # ============================================================== #
+        CfnOutput(self, "CallerApiUrl", value=caller_api.url)
+        CfnOutput(self, "McpApiUrl", value=mcp_api.url)
+        CfnOutput(self, "McpInvokeRoleArn", value=doa_invoke_role.role_arn)
         CfnOutput(self, "ReportBucketName", value=report_bucket.bucket_name)
         CfnOutput(self, "NotifyTopicArn", value=notify_topic.topic_arn)
+        CfnOutput(self, "OrchestratorFnArn", value=orchestrator_fn.function_arn)
+        CfnOutput(self, "ExecutionFnArn", value=execution_fn.function_arn)
 
     # ====================================================================== #
-    # Per-Agent IAM policies (least privilege)
+    # Helpers
     # ====================================================================== #
+    def _make_role(
+        self,
+        name: str,
+        extra_policies: list[iam.PolicyStatement] | None = None,
+    ) -> iam.Role:
+        role = iam.Role(
+            self,
+            name,
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"
+                ),
+            ],
+        )
+        for stmt in extra_policies or []:
+            role.add_to_policy(stmt)
+        return role
+
     @staticmethod
     def _bedrock_policy() -> iam.PolicyStatement:
         return iam.PolicyStatement(
@@ -231,87 +399,27 @@ class NLOpsStack(Stack):
             resources=["*"],
         )
 
-    def _router_policies(self):
-        return [self._bedrock_policy()]
-
-    def _discovery_policies(self):
-        return [
-            self._bedrock_policy(),
-            iam.PolicyStatement(
-                actions=[
-                    "cloudwatch:GetMetricData",
-                    "cloudwatch:GetMetricStatistics",
-                    "cloudwatch:ListMetrics",
-                    "logs:FilterLogEvents",
-                    "logs:GetLogEvents",
-                    "logs:DescribeLogGroups",
-                    "xray:GetTraceSummaries",
-                    "xray:BatchGetTraces",
-                    "ec2:Describe*",
-                    "ecs:Describe*",
-                    "ecs:List*",
-                    "rds:Describe*",
-                    "elasticloadbalancing:Describe*",
-                ],
-                resources=["*"],
-            ),
-        ]
-
-    def _analysis_policies(self):
-        # Read-only across observability surfaces
-        return [
-            self._bedrock_policy(),
-            iam.PolicyStatement(
-                actions=[
-                    "cloudwatch:Get*",
-                    "cloudwatch:List*",
-                    "cloudwatch:Describe*",
-                    "logs:Filter*",
-                    "logs:Get*",
-                    "xray:Get*",
-                    "xray:BatchGet*",
-                ],
-                resources=["*"],
-            ),
-        ]
-
-    def _execution_policies(self):
-        # Write surface; constrained to a tag boundary in real deployments
-        return [
-            self._bedrock_policy(),
-            iam.PolicyStatement(
-                actions=[
-                    "ecs:UpdateService",
-                    "autoscaling:SetDesiredCapacity",
-                    "autoscaling:UpdateAutoScalingGroup",
-                    "rds:RebootDBInstance",
-                    "ec2:RebootInstances",
-                ],
-                resources=["*"],
-                conditions={
-                    "StringEquals": {"aws:ResourceTag/nlops:managed": "true"}
-                },
-            ),
-        ]
-
-    def _knowledge_policies(self):
-        return [
-            self._bedrock_policy(),
-            # Permissions to Bedrock KB will be granted via the KB resource
-            # arn in production; using broad action set here for clarity.
-            iam.PolicyStatement(
-                actions=[
-                    "bedrock:Retrieve",
-                    "bedrock:RetrieveAndGenerate",
-                    "aoss:APIAccessAll",
-                ],
-                resources=["*"],
-            ),
-        ]
-
-    def _report_policies(self, report_bucket: s3.Bucket):
-        stmt = iam.PolicyStatement(
-            actions=["s3:PutObject", "s3:PutObjectAcl", "s3:GetObject"],
-            resources=[f"{report_bucket.bucket_arn}/*"],
+    @staticmethod
+    def _doa_read_chat_policy() -> iam.PolicyStatement:
+        """Read & chat — used by Orchestrator (L1) and EB Subscriber (L3)."""
+        return iam.PolicyStatement(
+            actions=[
+                "aidevops:StartChatSession",
+                "aidevops:GetChatSession",
+                "aidevops:ListChatSessions",
+                "aidevops:GetInvestigation",
+                "aidevops:ListInvestigations",
+            ],
+            resources=["*"],
         )
-        return [self._bedrock_policy(), stmt]
+
+    @staticmethod
+    def _doa_create_investigation_policy() -> iam.PolicyStatement:
+        """Create investigations — Orchestrator (L1) only."""
+        return iam.PolicyStatement(
+            actions=[
+                "aidevops:CreateInvestigation",
+                "aidevops:UpdateInvestigation",
+            ],
+            resources=["*"],
+        )
