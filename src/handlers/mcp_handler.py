@@ -1,10 +1,12 @@
 """L4 MCP Server Lambda — exposes customer's private tools to AWS DevOps Agent
 and Amazon Quick Desktop / Suite.
 
-Behind API Gateway with two routes:
+Behind API Gateway with routes:
   POST /mcp        AWS_IAM (SigV4)  — for AWS DevOps Agent
   POST /mcp-public NONE             — for Amazon Quick (No Auth) / public clients
   GET  /mcp-public NONE             — health/discovery probes
+  GET/POST /sse    NONE             — SSE transport for Quick Desktop
+  POST /message    NONE             — SSE transport message endpoint
 """
 from __future__ import annotations
 
@@ -55,20 +57,17 @@ def handler(event: dict, context) -> dict:
 
     # GET — clients (Quick Desktop / mcp-inspector) use this to open the
     # SSE stream that delivers JSON-RPC responses asynchronously.
-    # Per MCP Streamable HTTP spec: when client sends Accept: text/event-stream
-    # we MUST return text/event-stream content-type.
+    # Per MCP SSE Transport spec: GET /sse returns an 'endpoint' event
+    # telling the client where to POST JSON-RPC messages.
     if method == "GET":
-        if "text/event-stream" in accept:
-            # Open an SSE channel. We don't have async events to push for
-            # this tool-only server, but we must keep the response format
-            # SSE so the client treats the connection as established.
-            # Lambda+API Gateway can't keep a long-lived stream; we send a
-            # comment line and close — most clients accept this and will
-            # POST their JSON-RPC requests to the same URL afterward.
+        path = event.get("path", "/mcp-quick")
+        if "text/event-stream" in accept or path == "/sse":
+            # SSE Transport: tell client to POST to /message
+            # This is what sse_client (used by Quick Desktop) expects.
+            # The endpoint should be an absolute path from root.
             sse_body = (
-                ": stream opened\n"
-                f"event: endpoint\n"
-                f"data: {event.get('path','/mcp-quick')}\n\n"
+                "event: endpoint\n"
+                "data: /message\n\n"
             )
             return {
                 "statusCode": 200,
@@ -90,8 +89,8 @@ def handler(event: dict, context) -> dict:
                 "result": {
                     "serverInfo": {"name": "NLOps Private Tools", "version": "1.0.0"},
                     "protocolVersion": "2024-11-05",
-                    "transport": "streamable-http",
-                    "endpoint": "POST this same URL with a JSON-RPC body",
+                    "transport": "sse",
+                    "endpoint": "POST /message with a JSON-RPC body",
                     "tools_count": len(server._tools),
                 },
             },

@@ -43,3 +43,7 @@ build/
 # Local data
 local_data/
 seed-knowledge.local.jsonl
+
+# Node.js
+node_modules/
+

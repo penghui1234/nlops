@@ -73,6 +73,9 @@ nlops/
 │   ├── cdk.json
 │   ├── requirements.txt
 │   └── nlops_stack.py         # 4 Lambda + DDB×3 + S3 + SNS + EB
+├── mcp-bridge/              # Quick Desktop MCP 桥接器
+│   ├── index.js                     # stdio MCP server
+│   └── package.json
 ├── src/
 │   ├── handlers/              # 4 Lambda 入口
 │   │   ├── api_handler.py             # L1 Orchestrator
@@ -142,6 +145,60 @@ cdk deploy
 pip install -r requirements.txt
 pytest tests/ -q
 ```
+
+---
+
+## Quick Desktop 集成
+
+NLOps 提供 MCP Bridge，支持 Quick Desktop 本地连接：
+
+### 配置方式
+
+1. **安装依赖**：
+```bash
+cd mcp-bridge
+npm install
+```
+
+2. **Quick Desktop 配置**：
+   - 模式：Local
+   - Command：`node`
+   - Arguments：`<项目路径>/mcp-bridge/index.js`
+
+### 可用工具（18个）
+
+| 类别 | 工具 | 功能 |
+|------|------|------|
+| 发现 | `discover_resources` / `discover_alerts` / `discover_incidents` | 资源/告警/事件发现 |
+| 知识 | `query_knowledge_base` / `search_runbooks` / `get_service_owner` / `get_service_dependencies` | 知识检索 |
+| 分析 | `analyze_logs` / `analyze_metrics` / `analyze_traces` / `analyze_root_cause` | 日志/指标/追踪/根因分析 |
+| 执行 | `execute_remediation` / `restart_service` / `scale_service` / `create_ticket` | 修复/重启/扩缩容/工单 |
+| 报告 | `generate_report` / `list_investigations` / `get_investigation` | 报告生成 |
+
+### 示例对话
+
+```
+用户: order-service 延迟为什么涨了？
+NLOps: [调用 analyze_metrics + analyze_logs]
+       发现 order-service 在 10:30 后延迟从 50ms 涨到 500ms，
+       原因是数据库连接池耗尽...
+
+用户: 帮我扩容到 400
+NLOps: 已生成确认令牌，请确认后执行...
+```
+
+---
+
+## 环境变量
+
+部署后需在 Lambda 环境变量中配置：
+
+| 变量 | 说明 | 示例 |
+|------|------|------|
+| `BEDROCK_MODEL_ID` | Bedrock LLM 模型 | `moonshotai.kimi-k2.5` |
+| `BEDROCK_EMBED_MODEL` | 嵌入模型 | `amazon.titan-embed-text-v2:0` |
+| `DOA_AGENT_SPACE_ID` | DevOps Agent Space | `774d6ebc-...` |
+| `REPORT_BUCKET` | 报告存储桶 | `nlopsstack-reportbucket...` |
 
 ---
 

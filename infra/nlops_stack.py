@@ -1,4 +1,4 @@
-"""NLOps CDK Stack (v2).
+﻿"""NLOps CDK Stack (v2).
 
 Architecture (see docs/02-design.md §1.2):
 
@@ -131,7 +131,8 @@ class NLOpsStack(Stack):
             "CONFIRM_TOKENS_TABLE": confirm_tokens_table.table_name,
             "NOTIFY_TOPIC_ARN": notify_topic.topic_arn,
             "BEDROCK_MODEL_ID": "moonshotai.kimi-k2.5",
-            "BEDROCK_EMBED_MODEL": "amazon.titan-embed-text-v2:0",
+            "NOVA_SONIC_MODEL_ID": "amazon.nova-sonic-v1:0",
+              "BEDROCK_EMBED_MODEL": "amazon.titan-embed-text-v2:0",
             "DOA_AGENT_SPACE_ID": "774d6ebc-e1c0-498b-853f-e28fc457142c",  # nlops-demo
             "LOG_LEVEL": "INFO",
         }
@@ -268,6 +269,12 @@ class NLOpsStack(Stack):
         # It only proxies to customer's internal endpoints (CMDB / Jira / APM).
         # Customer wires VPC link / Private Connection via parameters.
         audit_table.grant_write_data(mcp_role)
+        report_bucket.grant_read_write(mcp_role)  # Allow report generation
+        
+        # Add Bedrock and DevOps Agent permissions for MCP tools
+        mcp_role.add_to_policy(self._bedrock_policy())
+        mcp_role.add_to_policy(self._doa_read_chat_policy())
+        mcp_role.add_to_policy(self._doa_create_investigation_policy())
 
         mcp_fn = lambda_.Function(
             self,
@@ -280,7 +287,7 @@ class NLOpsStack(Stack):
             role=mcp_role,
             environment={
                 **common_env,
-                "MCP_TOOLS_ALLOWLIST": "get_service_owner,get_recent_jira_tickets,get_internal_apm_metric",
+                "MCP_TOOLS_ALLOWLIST": "",  # Empty = all tools enabled
             },
         )
 
@@ -324,7 +331,7 @@ class NLOpsStack(Stack):
             authorization_type=apigw.AuthorizationType.IAM,
         )
 
-        # Additional /mcp-public resource with NO auth — for Amazon Quick Suite
+        # Additional /mcp-public resource with NO auth �?for Amazon Quick Suite
         # which only supports OAuth or No Auth (no SigV4). Demo-only;
         # production should add OAuth (Cognito) or remove this method.
         mcp_public = mcp_api.root.add_resource("mcp-public")
@@ -350,6 +357,12 @@ class NLOpsStack(Stack):
         mcp_sse.add_method("POST", authorization_type=apigw.AuthorizationType.NONE)
         mcp_sse.add_method("GET", authorization_type=apigw.AuthorizationType.NONE)
         mcp_sse.add_method("OPTIONS", authorization_type=apigw.AuthorizationType.NONE)
+
+        # /message endpoint for SSE transport (used by Quick Desktop's sse_client)
+        # GET /sse returns 'endpoint: /message', then client POSTs here
+        mcp_message = mcp_api.root.add_resource("message")
+        mcp_message.add_method("POST", authorization_type=apigw.AuthorizationType.NONE)
+        mcp_message.add_method("OPTIONS", authorization_type=apigw.AuthorizationType.NONE)
 
         # IAM Role that DevOps Agent will assume to call our MCP Server
         # The trust policy lets aidevops.amazonaws.com sts:AssumeRole this role,
@@ -428,7 +441,7 @@ class NLOpsStack(Stack):
 
     @staticmethod
     def _doa_read_chat_policy() -> iam.PolicyStatement:
-        """Read & chat — used by Orchestrator (L1) and EB Subscriber (L3).
+        """Read & chat �?used by Orchestrator (L1) and EB Subscriber (L3).
 
         Real API operations (verified via boto3.client('devops-agent')
         .meta.service_model.operation_names in 2026-05):
@@ -453,7 +466,7 @@ class NLOpsStack(Stack):
 
     @staticmethod
     def _doa_create_investigation_policy() -> iam.PolicyStatement:
-        """Create backlog tasks (investigations / knowledge) — Orchestrator (L1) only."""
+        """Create backlog tasks (investigations / knowledge) �?Orchestrator (L1) only."""
         return iam.PolicyStatement(
             actions=[
                 "aidevops:CreateBacklogTask",

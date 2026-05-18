@@ -1,0 +1,13 @@
+{
+  "name": "nlops-mcp-bridge",
+  "version": "1.0.0",
+  "description": "MCP bridge for NLOps tools - connects Quick Desktop to AWS MCP server",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "nlops-mcp": "./index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}
