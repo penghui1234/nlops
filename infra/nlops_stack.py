@@ -1,34 +1,25 @@
-﻿"""NLOps CDK Stack (v2).
+"""NLOps CDK Stack v3.
 
-Architecture (see docs/02-design.md §1.2):
-
-  L1 Orchestrator Lambda
-    - Entry point for caller API GW
-    - Strands SDK in-process orchestration of 5 logical Tools:
-      Router / Discovery / Analysis / Knowledge / Report
-    - Calls AWS DevOps Agent (chat / investigation)
-    - Invokes L2 cross-Lambda for write actions
-
-  L2 Execution Lambda
-    - Independent IAM (write boundary)
-    - Validates Confirm Token (DDB) + Policy
-    - Calls AWS resource APIs (ECS/EC2/RDS/...) under tag boundary
-
-  L3 EventBridge Subscriber Lambda
-    - Subscribes to 'aws.aidevops' source events
-    - Renders HTML diagnostic page, pushes IM card
-
-  L4 MCP Server Lambda
-    - Exposes customer's private tools as MCP Server (for DevOps Agent)
-    - Behind a separate API Gateway with AWS_IAM (SigV4) auth
+Architecture (post-merger / 2026-05-19):
+  L1 OrchestratorFn  — single entry for chat / voice / webhook / MCP / EventBridge
+                       Strands Agents SDK drives 5 high-level tools that call DOA.
+                       Hosts:
+                         • api_handler       (chat / voice / webhook entry)
+                         • mcp_handler       (18 + 3 MCP tools, also exposes smart_diagnose)
+                         • eventbridge_handler (alarm-driven HTML + SES email + KB sink)
+  L2 ExecutionFn     — write-isolated Lambda (still independent for IAM boundary)
 
 Plus:
   - 1 caller-facing API Gateway (Quick / WeCom / Feishu webhooks)
-  - 1 MCP API Gateway
+  - 1 MCP API Gateway (DOA / Quick Desktop)
   - S3 bucket (reports + KB sink)
   - 3 DynamoDB tables: sessions / audit / confirm-tokens
-  - SNS topic for notifications
-  - EventBridge Rule for DevOps Agent investigation events
+  - SNS topic for legacy fan-out
+  - EventBridge Rule for DOA investigation events
+  - SES email identity (verified out-of-band)
+  - 1 Lambda Layer for strands-agents SDK
+
+L3 EventBridgeSubscriberFn and L4 McpServerFn are removed (merged into L1).
 """
 from __future__ import annotations
 
@@ -50,11 +41,13 @@ from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_sns as sns
 from constructs import Construct
 
-SRC_DIR = Path(__file__).resolve().parent.parent / "src"
+ROOT_DIR = Path(__file__).resolve().parent.parent
+SRC_DIR = ROOT_DIR / "src"
+STRANDS_LAYER_ZIP = Path("/tmp/strands-layer/strands-layer.zip")
 
 
 class NLOpsStack(Stack):
-    """v2 stack: 4 Lambdas + DevOps Agent integration."""
+    """v3 stack: 2 Lambdas (L1 + L2 only) + DOA integration + SES email."""
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -122,7 +115,7 @@ class NLOpsStack(Stack):
         )
 
         # ============================================================== #
-        # 3. Common environment
+        # 3. Common environment + Strands layer
         # ============================================================== #
         common_env = {
             "REPORT_BUCKET": report_bucket.bucket_name,
@@ -130,47 +123,34 @@ class NLOpsStack(Stack):
             "AUDIT_TABLE": audit_table.table_name,
             "CONFIRM_TOKENS_TABLE": confirm_tokens_table.table_name,
             "NOTIFY_TOPIC_ARN": notify_topic.topic_arn,
-            "BEDROCK_MODEL_ID": "moonshotai.kimi-k2.5",
+            "BEDROCK_MODEL_ID": "amazon.nova-pro-v1:0",
             "NOVA_SONIC_MODEL_ID": "amazon.nova-sonic-v1:0",
-              "BEDROCK_EMBED_MODEL": "amazon.titan-embed-text-v2:0",
-            "DOA_AGENT_SPACE_ID": "774d6ebc-e1c0-498b-853f-e28fc457142c",  # nlops-demo
+            "BEDROCK_EMBED_MODEL": "amazon.titan-embed-text-v2:0",
+            "BEDROCK_KB_ID": "",
+            "BEDROCK_KB_DATA_SOURCE_ID": "",
+            "DOA_AGENT_SPACE_ID": "52e43342-bbe2-4fb7-aadd-c072410509ba",  # nlops-demo
+            "DOA_BOTO3_SERVICE": "devops-agent",  # GA service name (not 'aidevops')
+            # SES alert email (must be verified in SES sandbox)
+            "ALERT_EMAIL_FROM": "penghuichen@nwcdcloud.cn",
+            "ALERT_EMAIL_TO": "penghuichen@nwcdcloud.cn",
+            # Default to real mode; flip to "true" on McpServer for demo rehearsal.
+            "MOCK_MODE": "false",
             "LOG_LEVEL": "INFO",
         }
 
         code_asset = lambda_.Code.from_asset(str(SRC_DIR))
 
-        # ============================================================== #
-        # 4. L1 Orchestrator Lambda (entry + Strands SDK in-proc agents)
-        # ============================================================== #
-        orchestrator_role = self._make_role(
-            "OrchestratorRole",
-            extra_policies=[
-                self._bedrock_policy(),
-                self._doa_read_chat_policy(),
-                self._doa_create_investigation_policy(),
-            ],
-        )
-        sessions_table.grant_read_write_data(orchestrator_role)
-        audit_table.grant_write_data(orchestrator_role)
-        confirm_tokens_table.grant_read_write_data(orchestrator_role)
-        notify_topic.grant_publish(orchestrator_role)
-        report_bucket.grant_put(orchestrator_role)
-        report_bucket.grant_read(orchestrator_role)
-
-        orchestrator_fn = lambda_.Function(
+        # Strands Agents Lambda Layer (built locally via pip --platform)
+        strands_layer = lambda_.LayerVersion(
             self,
-            "OrchestratorFn",
-            runtime=lambda_.Runtime.PYTHON_3_12,
-            handler="handlers.api_handler.handler",
-            code=code_asset,
-            timeout=Duration.seconds(60),
-            memory_size=1024,
-            role=orchestrator_role,
-            environment=common_env,
+            "StrandsLayer",
+            code=lambda_.Code.from_asset(str(STRANDS_LAYER_ZIP)),
+            compatible_runtimes=[lambda_.Runtime.PYTHON_3_12],
+            description="strands-agents SDK + deps for NLOps L1 Orchestrator",
         )
 
         # ============================================================== #
-        # 5. L2 Execution Lambda (write isolation)
+        # 4. L2 Execution Lambda (declared first because L1 depends on it)
         # ============================================================== #
         execution_role = self._make_role("ExecutionRole")
         execution_role.add_to_policy(
@@ -208,45 +188,95 @@ class NLOpsStack(Stack):
             role=execution_role,
             environment=common_env,
         )
-        # Allow L1 Orchestrator to invoke L2 Execution
-        execution_fn.grant_invoke(orchestrator_role)
-        # Pass execution function name to L1 via env
-        orchestrator_fn.add_environment("EXECUTION_FN_NAME", execution_fn.function_name)
 
         # ============================================================== #
-        # 6. L3 EventBridge Subscriber (DOA investigation events)
+        # 5. L1 OrchestratorFn — handles chat / mcp / eventbridge
         # ============================================================== #
-        ebsub_role = self._make_role(
-            "EventBridgeSubscriberRole",
+        orchestrator_role = self._make_role(
+            "OrchestratorRole",
             extra_policies=[
                 self._bedrock_policy(),
-                iam.PolicyStatement(
-                    actions=[
-                        "aidevops:GetInvestigation",
-                        "aidevops:GetEvaluation",
-                        "aidevops:ListInvestigations",
-                    ],
-                    resources=["*"],
-                ),
+                self._doa_read_chat_policy(),
+                self._doa_create_investigation_policy(),
             ],
         )
-        report_bucket.grant_put(ebsub_role)
-        notify_topic.grant_publish(ebsub_role)
-        audit_table.grant_write_data(ebsub_role)
+        # Storage
+        sessions_table.grant_read_write_data(orchestrator_role)
+        audit_table.grant_read_write_data(orchestrator_role)
+        confirm_tokens_table.grant_read_write_data(orchestrator_role)
+        notify_topic.grant_publish(orchestrator_role)
+        report_bucket.grant_read_write(orchestrator_role)
 
-        ebsub_fn = lambda_.Function(
-            self,
-            "EventBridgeSubscriberFn",
-            runtime=lambda_.Runtime.PYTHON_3_12,
-            handler="handlers.eventbridge_handler.handler",
-            code=code_asset,
-            timeout=Duration.seconds(60),
-            memory_size=512,
-            role=ebsub_role,
-            environment=common_env,
+        # SES email
+        orchestrator_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["ses:SendEmail", "ses:SendRawEmail", "ses:GetSendQuota"],
+                resources=["*"],
+            )
         )
 
-        # EventBridge rule: subscribe to DevOps Agent investigation events
+        # Cross-Lambda: invoke L2 Execution
+        execution_fn.grant_invoke(orchestrator_role)
+
+        # Read-only AWS observability + tag for analyze_*/discover_* MCP tools
+        orchestrator_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    # CloudWatch
+                    "cloudwatch:GetMetricData",
+                    "cloudwatch:GetMetricStatistics",
+                    "cloudwatch:ListMetrics",
+                    "cloudwatch:DescribeAlarms",
+                    # CloudWatch Logs (Insights)
+                    "logs:DescribeLogGroups",
+                    "logs:DescribeLogStreams",
+                    "logs:FilterLogEvents",
+                    "logs:StartQuery",
+                    "logs:StopQuery",
+                    "logs:GetQueryResults",
+                    # X-Ray
+                    "xray:GetServiceGraph",
+                    "xray:GetTraceSummaries",
+                    "xray:BatchGetTraces",
+                    "xray:GetTraceGraph",
+                    # Resource discovery
+                    "ecs:ListClusters",
+                    "ecs:ListServices",
+                    "ecs:DescribeServices",
+                    "ec2:DescribeInstances",
+                    "ec2:DescribeRegions",
+                    "rds:DescribeDBInstances",
+                    "elasticloadbalancing:DescribeLoadBalancers",
+                    "lambda:ListFunctions",
+                    # Tags lookup
+                    "tag:GetResources",
+                    "tag:GetTagKeys",
+                    "tag:GetTagValues",
+                ],
+                resources=["*"],
+            )
+        )
+
+        orchestrator_fn = lambda_.Function(
+            self,
+            "OrchestratorFn",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="handlers.api_handler.handler",
+            code=code_asset,
+            timeout=Duration.seconds(120),  # Strands + DOA chat may take 30s+
+            memory_size=1536,                # Strands SDK + Bedrock client
+            role=orchestrator_role,
+            environment={
+                **common_env,
+                "EXECUTION_FN_NAME": execution_fn.function_name,
+                "MCP_TOOLS_ALLOWLIST": "",  # empty = all tools
+            },
+            layers=[strands_layer],
+        )
+
+        # ============================================================== #
+        # 6. EventBridge Rule — target is L1 directly (no L3 anymore)
+        # ============================================================== #
         events.Rule(
             self,
             "DOAInvestigationRule",
@@ -258,41 +288,11 @@ class NLOpsStack(Stack):
                     "Evaluation Completed",
                 ],
             ),
-            targets=[targets.LambdaFunction(ebsub_fn)],
+            targets=[targets.LambdaFunction(orchestrator_fn)],
         )
 
         # ============================================================== #
-        # 7. L4 MCP Server Lambda (exposes customer tools to DOA)
-        # ============================================================== #
-        mcp_role = self._make_role("McpServerRole")
-        # NLOps MCP Server should NOT have AWS resource permissions.
-        # It only proxies to customer's internal endpoints (CMDB / Jira / APM).
-        # Customer wires VPC link / Private Connection via parameters.
-        audit_table.grant_write_data(mcp_role)
-        report_bucket.grant_read_write(mcp_role)  # Allow report generation
-        
-        # Add Bedrock and DevOps Agent permissions for MCP tools
-        mcp_role.add_to_policy(self._bedrock_policy())
-        mcp_role.add_to_policy(self._doa_read_chat_policy())
-        mcp_role.add_to_policy(self._doa_create_investigation_policy())
-
-        mcp_fn = lambda_.Function(
-            self,
-            "McpServerFn",
-            runtime=lambda_.Runtime.PYTHON_3_12,
-            handler="handlers.mcp_handler.handler",
-            code=code_asset,
-            timeout=Duration.seconds(30),
-            memory_size=256,
-            role=mcp_role,
-            environment={
-                **common_env,
-                "MCP_TOOLS_ALLOWLIST": "",  # Empty = all tools enabled
-            },
-        )
-
-        # ============================================================== #
-        # 8. Caller-facing API Gateway  (/chat /voice /webhook)
+        # 7. Caller-facing API Gateway (/chat /voice /webhook)
         # ============================================================== #
         caller_api = apigw.LambdaRestApi(
             self,
@@ -310,12 +310,12 @@ class NLOpsStack(Stack):
             caller_api.root.add_resource(path).add_method("POST")
 
         # ============================================================== #
-        # 9. MCP API Gateway (DOA -> NLOps MCP server, SigV4)
+        # 8. MCP API Gateway (also targets L1 — no L4 anymore)
         # ============================================================== #
         mcp_api = apigw.LambdaRestApi(
             self,
             "McpApi",
-            handler=mcp_fn,
+            handler=orchestrator_fn,
             proxy=False,
             deploy_options=apigw.StageOptions(
                 stage_name="prod",
@@ -324,49 +324,20 @@ class NLOpsStack(Stack):
                 metrics_enabled=True,
             ),
         )
-        # Single /mcp resource with AWS_IAM auth (SigV4)
+        # /mcp — IAM-authenticated for AWS DevOps Agent (mcp-out path)
         mcp_resource = mcp_api.root.add_resource("mcp")
-        mcp_resource.add_method(
-            "POST",
-            authorization_type=apigw.AuthorizationType.IAM,
-        )
+        mcp_resource.add_method("POST", authorization_type=apigw.AuthorizationType.IAM)
 
-        # Additional /mcp-public resource with NO auth �?for Amazon Quick Suite
-        # which only supports OAuth or No Auth (no SigV4). Demo-only;
-        # production should add OAuth (Cognito) or remove this method.
-        mcp_public = mcp_api.root.add_resource("mcp-public")
-        mcp_public.add_method(
-            "POST",
-            authorization_type=apigw.AuthorizationType.NONE,
-        )
-        mcp_public.add_method(
-            "GET",
-            authorization_type=apigw.AuthorizationType.NONE,
-        )
+        # /mcp-public, /mcp-quick, /sse, /message — NoAuth for Quick Desktop
+        for name in ("mcp-public", "mcp-quick", "sse", "message"):
+            r = mcp_api.root.add_resource(name)
+            r.add_method("POST", authorization_type=apigw.AuthorizationType.NONE)
+            r.add_method("GET", authorization_type=apigw.AuthorizationType.NONE)
+            r.add_method("OPTIONS", authorization_type=apigw.AuthorizationType.NONE)
 
-        # Same Lambda; alternative path so a Quick Desktop integration that
-        # cached a failed initial state on /mcp-public can be added again
-        # under a different URL and re-handshake from scratch.
-        mcp_quick = mcp_api.root.add_resource("mcp-quick")
-        mcp_quick.add_method("POST", authorization_type=apigw.AuthorizationType.NONE)
-        mcp_quick.add_method("GET", authorization_type=apigw.AuthorizationType.NONE)
-        mcp_quick.add_method("OPTIONS", authorization_type=apigw.AuthorizationType.NONE)
-
-        # SSE-style alias since some MCP clients expect /sse in the URL
-        mcp_sse = mcp_api.root.add_resource("sse")
-        mcp_sse.add_method("POST", authorization_type=apigw.AuthorizationType.NONE)
-        mcp_sse.add_method("GET", authorization_type=apigw.AuthorizationType.NONE)
-        mcp_sse.add_method("OPTIONS", authorization_type=apigw.AuthorizationType.NONE)
-
-        # /message endpoint for SSE transport (used by Quick Desktop's sse_client)
-        # GET /sse returns 'endpoint: /message', then client POSTs here
-        mcp_message = mcp_api.root.add_resource("message")
-        mcp_message.add_method("POST", authorization_type=apigw.AuthorizationType.NONE)
-        mcp_message.add_method("OPTIONS", authorization_type=apigw.AuthorizationType.NONE)
-
-        # IAM Role that DevOps Agent will assume to call our MCP Server
-        # The trust policy lets aidevops.amazonaws.com sts:AssumeRole this role,
-        # with confused-deputy guards.
+        # ============================================================== #
+        # 9. IAM Role assumed by AWS DevOps Agent to call our MCP Server
+        # ============================================================== #
         doa_invoke_role = iam.Role(
             self,
             "DOAInvokeMcpRole",
@@ -404,6 +375,7 @@ class NLOpsStack(Stack):
         CfnOutput(self, "NotifyTopicArn", value=notify_topic.topic_arn)
         CfnOutput(self, "OrchestratorFnArn", value=orchestrator_fn.function_arn)
         CfnOutput(self, "ExecutionFnArn", value=execution_fn.function_arn)
+        CfnOutput(self, "StrandsLayerArn", value=strands_layer.layer_version_arn)
 
     # ====================================================================== #
     # Helpers
@@ -441,14 +413,7 @@ class NLOpsStack(Stack):
 
     @staticmethod
     def _doa_read_chat_policy() -> iam.PolicyStatement:
-        """Read & chat �?used by Orchestrator (L1) and EB Subscriber (L3).
-
-        Real API operations (verified via boto3.client('devops-agent')
-        .meta.service_model.operation_names in 2026-05):
-          CreateChat / SendMessage / ListChats
-          GetBacklogTask / ListBacklogTasks
-          ListAgentSpaces / GetAgentSpace
-        """
+        """Read & chat for L1 (collapsed from L1+L3+L4 roles in v3 merger)."""
         return iam.PolicyStatement(
             actions=[
                 "aidevops:CreateChat",
@@ -466,7 +431,6 @@ class NLOpsStack(Stack):
 
     @staticmethod
     def _doa_create_investigation_policy() -> iam.PolicyStatement:
-        """Create backlog tasks (investigations / knowledge) �?Orchestrator (L1) only."""
         return iam.PolicyStatement(
             actions=[
                 "aidevops:CreateBacklogTask",

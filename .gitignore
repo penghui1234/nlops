@@ -1,49 +1,16 @@
-# Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
+*.pyc
+*.pyo
+.pytest_cache/
 *.egg-info/
+.coverage
 .venv/
 venv/
-env/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# CDK
+node_modules/
+infra/cdk.out/
 .cdk.staging/
-cdk.out/
-*.swp
-
-# IDE
+.aws-sam/
+.DS_Store
 .idea/
 .vscode/
-*.iml
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs / secrets
-*.log
-.env
-.env.*
-!.env.example
-secrets/
-*.pem
-*.key
-
-# Build artifacts
-dist/
-build/
-*.egg
-
-# Local data
-local_data/
-seed-knowledge.local.jsonl
-
-# Node.js
-node_modules/
-
+*.swp
