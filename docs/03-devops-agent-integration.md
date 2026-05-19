@@ -1,9 +1,15 @@
 # NLOps × AWS DevOps Agent 集成方案
 
-> 版本: v1.0  ·  最后更新: 2026-05-17
+> 版本: v3.0  ·  最后更新: 2026-05-19
 > 适用：开发团队实施参考；客户 PoC 联调清单
 > 对应需求: `01-requirements.md` FR-2.2/2.3/2.4/2.7/2.8、FR-5.5
 > 对应设计: `02-design.md` §2
+>
+> v3 修订（vs v1, 2026-05-17）：
+> - **boto3 service name 实测校正**：`aidevops` → `devops-agent`
+> - **API operation 名校正**：`start_chat_session` → `CreateChat` + `SendMessage`；`create_investigation` → `CreateBacklogTask`
+> - **Custom Skill SDK gap**：DOA boto3 client 没有 `CreateCustomSkill` 等操作，仅 console UI 可配；NLOps 改走 Bedrock KB 沉淀路径
+> - **mcp-out 故事调整**：v3 主用例从 "DOA → 客户私有工具" 调整为 "Quick Desktop / 任意 MCP-aware AI → NLOps 21 工具盒"
 
 ---
 
@@ -11,18 +17,43 @@
 
 ### 0.1 服务边界
 - **AWS DevOps Agent**（简称 **DOA**）：AWS 官方 GA 服务（2026-03-31），提供自治型 SRE 智能体能力
-- **NLOps**：本项目的 Lambda 集合（Orchestrator / Execution / EventBridge Subscriber / MCP Server）
+- **NLOps**：本项目的 Lambda 集合（v3：仅 OrchestratorFn + ExecutionFn 两个，原 L3/L4 已合并）
 - **Agent Space**：DOA 的工作空间概念，类似 tenant；一个 AWS 账户下可创建多个
 
 ### 0.2 关键 IAM 标识
 - DOA 服务主体（Service Principal）: `aidevops.amazonaws.com`
-- DOA 主要 IAM action prefix: `aidevops:*`
-- DOA 资源 ARN 模式: `arn:aws:aidevops:{region}:{account}:agent-space/{space-id}` / `:investigation/{inv-id}`
+- DOA 主要 IAM action prefix: `aidevops:*`（IAM 用 `aidevops`）
+- **boto3 client service name: `devops-agent`**（注意：IAM action 是 `aidevops:*`，但 boto3 client 是 `devops-agent`，AWS 命名不一致）
+- DOA 资源 ARN 模式: `arn:aws:aidevops:{region}:{account}:agent-space/{space-id}` / `:backlog-task/{task-id}`
 - EventBridge 事件 source: `aws.aidevops`
 
 ### 0.3 region 限制
 DOA GA 仅在 6 个 region：`us-east-1` / `us-west-2` / `eu-central-1` / `eu-west-1` / `ap-southeast-2` / `ap-northeast-1`。
-**v1 部署锁定 `us-east-1`**；备选 `ap-northeast-1`（亚太低延迟）。
+**v3 部署锁定 `us-east-1`**；备选 `ap-northeast-1`（亚太低延迟）。
+
+### 0.4 v3 实测的 DOA boto3 操作（44 个）
+
+```
+关键操作（NLOps 用到的）：
+  CreateChat / SendMessage / ListChats           — chat path
+  CreateBacklogTask / GetBacklogTask /           — investigation path
+  ListBacklogTasks / UpdateBacklogTask
+  CreateAgentSpace / GetAgentSpace /             — Agent Space 管理
+  ListAgentSpaces / UpdateAgentSpace
+  RegisterService / DeregisterService /          — Service 关联
+  ListServices / GetService
+  CreateAssociation / GetAssociation /           — CW alarm 关联
+  ListAssociations
+  EnableOperatorApp / DisableOperatorApp         — Operator Portal
+  GetRecommendation / ListRecommendations        — 建议
+  ListJournalRecords / ListExecutions            — 调查日志
+  CreatePrivateConnection / ...                  — VPC 连接
+  GetAccountUsage                                — 用量
+
+⚠️ 没有 Custom Skill 相关操作！
+  no CreateCustomSkill / RegisterSkill / etc.
+  (实测于 2026-05-19，service model 完整 dump)
+```
 
 ---
 
@@ -68,27 +99,42 @@ DOA GA 仅在 6 个 region：`us-east-1` / `us-west-2` / `eu-central-1` / `eu-we
 - 用户语音/文字主动查询："系统怎么样" → on-demand chat
 - 用户主动排障："X 服务为什么慢" → investigation
 
-### 2.2 SDK 调用
+### 2.2 SDK 调用（v3 实测）
 
 ```python
 import boto3
 from typing import Any
 
-# DevOps Agent uses 'aidevops' service name in boto3 (GA)
-agent_rt = boto3.client("aidevops", region_name="us-east-1")
+# v3 实测 service name = 'devops-agent' (不是 v1 设计文档里的 'aidevops')
+agent_rt = boto3.client("devops-agent", region_name="us-east-1")
 
 # --- 2.2.1 On-demand chat (5-30s, 同步) ---------------------- #
-def ask_chat(agent_space_id: str, prompt: str, session_id: str) -> str:
-    resp = agent_rt.start_chat_session(
+def ask_chat(agent_space_id: str, prompt: str, user_id: str = "nlops") -> str:
+    # Step 1: Create a chat execution
+    create_resp = agent_rt.create_chat(
         agentSpaceId=agent_space_id,
-        sessionId=session_id,                # 复用会话上下文
-        inputText=prompt,
+        userId=user_id,
+        userType="STATIC",
     )
-    # streaming response: aggregate chunks
+    execution_id = create_resp["executionId"]
+
+    # Step 2: Send the prompt
+    send_resp = agent_rt.send_message(
+        agentSpaceId=agent_space_id,
+        executionId=execution_id,
+        content=prompt,
+        userId=user_id,
+    )
+
+    # Step 3: Aggregate event stream into a single string
     chunks: list[str] = []
-    for evt in resp["completion"]:
-        if "chunk" in evt:
-            chunks.append(evt["chunk"]["bytes"].decode("utf-8"))
+    for evt in send_resp.get("events", []) or []:
+        if isinstance(evt, dict):
+            for k in ("content", "text", "message", "output"):
+                v = evt.get(k)
+                if isinstance(v, str):
+                    chunks.append(v)
+                    break
     return "".join(chunks)
 
 
@@ -98,24 +144,36 @@ def start_investigation(
     title: str,
     context: dict[str, Any],
 ) -> str:
-    """Returns investigation_id. Poll or subscribe via EventBridge for completion."""
-    resp = agent_rt.create_investigation(
+    """Returns task_id. Poll or subscribe via EventBridge for completion."""
+    resp = agent_rt.create_backlog_task(
         agentSpaceId=agent_space_id,
-        title=title,
-        context=context,                     # service / window / signals
+        reference={
+            "system": "NLOps",
+            "title": title[:200],
+            "referenceId": context.get("trace_id", "nlops-default"),
+            "referenceUrl": f"https://nlops.local/trace/{context.get('trace_id')}",
+            "associationId": context.get("association_id", "nlops-default"),
+        },
+        taskType="INVESTIGATION",
+        title=title[:200],
+        description=str(context)[:4000],
+        priority=context.get("priority", "MEDIUM"),
+        clientToken=str(uuid.uuid4()),
     )
-    return resp["investigationId"]
+    return resp["task"]["taskId"]
 
 
-def get_investigation(investigation_id: str) -> dict[str, Any]:
+def get_investigation(task_id: str, agent_space_id: str) -> dict[str, Any]:
     """Read current state. Useful for polling fallback."""
-    resp = agent_rt.get_investigation(investigationId=investigation_id)
-    return resp["investigation"]
+    resp = agent_rt.get_backlog_task(
+        agentSpaceId=agent_space_id,
+        taskId=task_id,
+    )
+    return resp.get("task", {})
 ```
 
-> ⚠️ **注**：DOA 的 boto3 service name 在 GA 后才稳定。本文按 `aidevops` 命名。
-> 如果实际 SDK 名称不同（例如 `aws-devops-agent` / `bedrock-aidevops`），需要替换。
-> **联调阶段必须先用 `aws devops-agent help` 确认 CLI 命令名，再 mirror 到 SDK**。
+> ✅ **v3 已校正**：v1 设计文档里的 `start_chat_session` / `create_investigation` 等 API 名是错的。
+> 实测于 2026-05-19，正确名称见上文。NLOps 代码 `src/tools/devops_agent.py` 已使用正确名称。
 
 ### 2.3 IAM 调用方权限（Orchestrator Lambda）
 
