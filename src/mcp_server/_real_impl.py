@@ -87,9 +87,8 @@ def _decimal_to_native(obj):
 # 1. Discovery
 # ===========================================================================
 def discover_incidents(status: str = "open", time_range_hours: int = 24) -> dict[str, Any]:
-    """Read recent incidents from the AuditTable (rows logged by Execution
-    & EventBridge handlers). Falls back to scanning recent rows if no
-    explicit ``incidents`` partition exists."""
+    """Read recent incidents from the AuditTable."""
+    time_range_hours = int(time_range_hours)
     table = _ddb_table("AUDIT_TABLE")
     if table is None:
         return {"status_filter": status, "time_range_hours": time_range_hours,
@@ -273,11 +272,9 @@ def get_service_dependencies(service_name: str) -> dict[str, Any]:
 # ===========================================================================
 def analyze_logs(log_group: str, time_range_minutes: int = 30,
                  pattern: str = "", limit: int = 100) -> dict[str, Any]:
-    """CloudWatch Logs Insights query.
-
-    Default Insights query: count error-level lines, group by message
-    prefix to surface top error patterns.
-    """
+    """CloudWatch Logs Insights query."""
+    time_range_minutes = int(time_range_minutes)
+    limit = int(limit)
     logs = _client("logs")
     end_ms = int(_now().timestamp() * 1000)
     start_ms = end_ms - time_range_minutes * 60 * 1000
@@ -351,6 +348,8 @@ def analyze_logs(log_group: str, time_range_minutes: int = 30,
 def analyze_metrics(namespace: str, metric_name: str, dimensions: str = "",
                     period: int = 60, time_range_minutes: int = 30) -> dict[str, Any]:
     """CloudWatch GetMetricStatistics."""
+    period = int(period)
+    time_range_minutes = int(time_range_minutes)
     cw = _client("cloudwatch")
     end = _now()
     start = end - timedelta(minutes=time_range_minutes)
@@ -402,6 +401,7 @@ def analyze_metrics(namespace: str, metric_name: str, dimensions: str = "",
 def analyze_traces(service: str, trace_id: str = "",
                    time_range_minutes: int = 30) -> dict[str, Any]:
     """X-Ray service-level summary or single-trace deep-dive."""
+    time_range_minutes = int(time_range_minutes)
     xray = _client("xray")
     end = _now()
     start = end - timedelta(minutes=time_range_minutes)
@@ -532,8 +532,8 @@ def _invoke_l2_execution(action: dict[str, Any], confirm_token: str,
 
     payload = {
         "trace_id": f"trc-mcp-{uuid.uuid4().hex[:12]}",
-        "user_id": user_id,
-        "session_id": session_id,
+        "user_id": user_id or "quick-desktop",
+        "session_id": session_id or "mcp-stateless",
         "confirm_token": confirm_token,
         "action": action,
     }

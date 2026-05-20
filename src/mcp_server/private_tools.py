@@ -57,10 +57,10 @@ def _client(name: str):
 
 @server.tool
 def discover_resources(resource_type: str = "all", region: str = "", tags: str = "") -> dict[str, Any]:
-    """Discover AWS resources (EC2 / ECS / RDS / ELB / Lambda).
+    """Discover AWS resources (EC2 / ECS / RDS / ELB / Lambda / S3 / DynamoDB / SNS / SQS / API Gateway).
 
     Args:
-        resource_type: resource type (ec2|ecs|rds|elb|lambda|all). Case-insensitive.
+        resource_type: resource type (ec2|ecs|rds|elb|lambda|s3|dynamodb|sns|sqs|apigw|all). Case-insensitive.
         region: AWS region; defaults to the Lambda region
         tags: tag filter, e.g. "Env=prod,Team=core"
     """
@@ -69,17 +69,26 @@ def discover_resources(resource_type: str = "all", region: str = "", tags: str =
     # Normalize a few common aliases the LLM might emit
     rt = {"ec2-instance": "ec2", "ecs-service": "ecs", "rds-instance": "rds",
           "elasticloadbalancing": "elb", "elb-v2": "elb", "alb": "elb",
-          "nlb": "elb", "lambda-function": "lambda"}.get(rt, rt)
+          "nlb": "elb", "lambda-function": "lambda",
+          "s3-bucket": "s3", "bucket": "s3",
+          "dynamodb-table": "dynamodb", "ddb": "dynamodb", "table": "dynamodb",
+          "sns-topic": "sns", "topic": "sns",
+          "sqs-queue": "sqs", "queue": "sqs",
+          "api-gateway": "apigw", "apigateway": "apigw", "rest-api": "apigw",
+          "api": "apigw"}.get(rt, rt)
 
     if _is_mock():
         return {
-            "resource_type": rt, "region": region, "count": 4,
+            "resource_type": rt, "region": region, "count": 7,
             "resources": [
                 {"type": "ec2-instance", "name": "demo-app-1", "instance_id": "i-mock0001",
                  "state": "running", "instance_type": "t3.medium", "region": region},
                 {"type": "ecs-service", "name": "payment-api", "cluster": "demo", "region": region},
-                {"type": "ecs-service", "name": "user-service", "cluster": "demo", "region": region},
                 {"type": "rds-instance", "name": "payment-db", "engine": "mysql", "region": region},
+                {"type": "s3-bucket", "name": "demo-reports", "region": region},
+                {"type": "dynamodb-table", "name": "demo-sessions", "region": region},
+                {"type": "sns-topic", "name": "demo-alerts", "region": region},
+                {"type": "sqs-queue", "name": "demo-tasks", "region": region},
             ],
         }
 
@@ -178,8 +187,90 @@ def discover_resources(resource_type: str = "all", region: str = "", tags: str =
                     })
         _safe("lambda", _do_lambda)
 
+    # S3 buckets (region-agnostic — list_buckets returns all)
+    if rt in ("s3", "all"):
+        def _do_s3():
+            s3 = boto3.client("s3", region_name=region)
+            for b in s3.list_buckets().get("Buckets", []):
+                # Get bucket region (s3 list_buckets doesn't include it)
+                try:
+                    loc = s3.get_bucket_location(Bucket=b["Name"]).get("LocationConstraint")
+                    bucket_region = loc or "us-east-1"
+                except Exception:
+                    bucket_region = "unknown"
+                # Filter by current region (s3 buckets are global but live in one region)
+                if rt == "s3" or bucket_region == region:
+                    resources.append({
+                        "type": "s3-bucket",
+                        "name": b["Name"],
+                        "region": bucket_region,
+                        "created": (b.get("CreationDate").isoformat()
+                                    if b.get("CreationDate") else None),
+                    })
+        _safe("s3", _do_s3)
+
+    # DynamoDB tables
+    if rt in ("dynamodb", "all"):
+        def _do_ddb():
+            ddb = boto3.client("dynamodb", region_name=region)
+            paginator = ddb.get_paginator("list_tables")
+            for page in paginator.paginate():
+                for name in page.get("TableNames", []):
+                    resources.append({
+                        "type": "dynamodb-table",
+                        "name": name,
+                        "region": region,
+                    })
+        _safe("dynamodb", _do_ddb)
+
+    # SNS topics
+    if rt in ("sns", "all"):
+        def _do_sns():
+            sns = boto3.client("sns", region_name=region)
+            paginator = sns.get_paginator("list_topics")
+            for page in paginator.paginate():
+                for t in page.get("Topics", []):
+                    arn = t["TopicArn"]
+                    resources.append({
+                        "type": "sns-topic",
+                        "name": arn.split(":")[-1],
+                        "arn": arn,
+                        "region": region,
+                    })
+        _safe("sns", _do_sns)
+
+    # SQS queues
+    if rt in ("sqs", "all"):
+        def _do_sqs():
+            sqs = boto3.client("sqs", region_name=region)
+            urls = sqs.list_queues().get("QueueUrls", []) or []
+            for url in urls:
+                resources.append({
+                    "type": "sqs-queue",
+                    "name": url.split("/")[-1],
+                    "url": url,
+                    "region": region,
+                })
+        _safe("sqs", _do_sqs)
+
+    # API Gateway REST APIs
+    if rt in ("apigw", "all"):
+        def _do_apigw():
+            api = boto3.client("apigateway", region_name=region)
+            paginator = api.get_paginator("get_rest_apis")
+            for page in paginator.paginate():
+                for r in page.get("items", []):
+                    resources.append({
+                        "type": "api-gateway-rest",
+                        "name": r["name"],
+                        "id": r["id"],
+                        "endpoint_types": r.get("endpointConfiguration", {}).get("types", []),
+                        "region": region,
+                    })
+        _safe("apigw", _do_apigw)
+
     out = {"resource_type": rt, "region": region,
-           "count": len(resources), "resources": resources[:100]}
+           "count": len(resources), "resources": resources[:200]}
     if errors:
         out["errors"] = errors
     return out
@@ -806,7 +897,7 @@ def request_confirm_token(action_type: str, params_json: str = "{}",
         ddb.put_item(Item={
             "token": token,
             "user_id": user_id,
-            "session_id": session_id or f"sess-mcp-{_uuid.uuid4().hex[:8]}",
+            "session_id": session_id or "mcp-stateless",
             "action_type": action_type,
             "params": params_json,
             "risk": risk,

@@ -63,11 +63,36 @@ class McpServer:
         if fn is None:
             raise KeyError(f"unknown tool: {name}")
         result = fn(**arguments)
+
+        # Display hint to the calling LLM (Claude / Nova / etc. in Quick Desktop).
+        # Without this, the LLM tends to add commentary, status messages, and
+        # speculation about why results look the way they do. The hint asks it
+        # to render the data faithfully and only volunteer interpretation when
+        # the user explicitly asks.
+        #
+        # Set MCP_VERBOSE_LLM=true to disable the hint (e.g. when you actively
+        # WANT the LLM to interpret).
+        text = json.dumps(result, ensure_ascii=False, default=str)
+        if os.getenv("MCP_VERBOSE_LLM", "false").strip().lower() not in ("1", "true", "yes"):
+            text = (
+                "[NLOps Display Instructions for the calling LLM]\n"
+                "1. Render the JSON below as a clean Markdown table or list.\n"
+                "2. DO NOT add commentary, status messages (e.g. \"已经跑通了 ✅\") "
+                "or status badges that aren't in the data.\n"
+                "3. DO NOT speculate why results look certain ways "
+                "(e.g. \"可能查询限制\" / \"可能没绑\"). Only state what's in the data.\n"
+                "4. If you have observations, put them under a single line "
+                "headed `## AI 备注` (≤ 1 sentence). Skip if no observation.\n"
+                "5. Keep the user's language (Chinese/English) consistent with their input.\n"
+                "[End Instructions]\n\n"
+                + text
+            )
+
         return {
             "content": [
                 {
                     "type": "text",
-                    "text": json.dumps(result, ensure_ascii=False, default=str),
+                    "text": text,
                 }
             ]
         }
