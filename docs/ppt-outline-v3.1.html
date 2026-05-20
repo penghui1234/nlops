@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>NLOps AB PPT 大纲 v3.1（24页）</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Microsoft YaHei',sans-serif;max-width:900px;margin:40px auto;padding:0 20px;color:#1a1a2e;line-height:1.7}
+h1{font-size:24px;margin-bottom:4px}
+.sub{color:#666;font-size:13px;margin-bottom:30px}
+h2{font-size:16px;color:#0052CC;border-bottom:2px solid #0052CC;padding-bottom:4px;margin:28px 0 12px}
+.slide{background:#fff;border:1px solid #e4e7ec;border-radius:8px;padding:12px 16px;margin-bottom:8px}
+.slide.demo{border-left:4px solid #FF9900}
+.sn{display:inline-block;width:22px;height:22px;border-radius:50%;background:#0052CC;color:#fff;text-align:center;font-size:11px;line-height:22px;margin-right:8px}
+.sn.d{background:#FF9900}
+.st{font-weight:600;font-size:14px}
+.sc{margin-top:4px;padding-left:30px;font-size:12.5px;color:#44546f}
+.sc ul{list-style:none;padding:0}
+.sc li::before{content:"•";color:#FF9900;font-weight:700;margin-right:6px}
+.hi{background:#fff8e1;padding:6px 10px;border-radius:5px;border-left:3px solid #FF9900;margin-top:6px;font-size:12px}
+.tag{display:inline-block;font-size:10px;padding:1px 6px;border-radius:10px;margin-left:8px}
+.tag-done{background:#e3fcef;color:#006644}
+.tag-todo{background:#f4f5f7;color:#666}
+.tag-video{background:#fff3e0;color:#bf360c}
+</style>
+</head>
+<body>
+<h1>NLOps AB 评审 PPT 大纲 v3.1</h1>
+<p class="sub">24 页 · ~17 分钟 · Demo 后置版 · 2026-06-02<br>
+叙事线：痛点(2-3) → 业界(4) → 客户要什么(5) → 解法(6) → 架构(7-8) → 核心能力×5(9-13) → Demo×5(14-18) → 安全(19) → 验证(20) → 性能(21) → 竞品+成本(22) → 收尾(23-24)</p>
+
+<h2>开场</h2>
+<div class="slide"><span class="sn">1</span><span class="st">封面</span><span class="tag tag-done">✅</span>
+<div class="sc"><ul>
+<li>NLOps：自然语言驱动的 AI 运维平台</li>
+<li>西云数据 解决方案架构师 陈朋辉 · 2026-06-02</li>
+</ul></div></div>
+
+<h2>痛点 + 业界 + 需求</h2>
+
+<div class="slide"><span class="sn">2</span><span class="st">客户的问题</span><span class="tag tag-done">✅</span>
+<div class="sc"><ul>
+<li>某客户迁移 100+ 微服务到 AWS，大量使用 ECS/ALB/Lambda/RDS/ElastiCache</li>
+<li>SRE 团队对 AWS 服务运维经验不足，希望快速定界定位并积累经验</li>
+<li>运维现状：主动逐一看 CW / 被动切换多控制台</li>
+<li>团队现状：依赖对 AWS 熟悉的工程师 / 经验无法沉淀</li>
+<li>痛点：上下文丢失 / 知识无法传承 / 指标多看不懂 / 定位耗时 / 值班不在电脑旁</li>
+</ul></div></div>
+
+<div class="slide"><span class="sn">3</span><span class="st">问题的挑战（技术难点）</span><span class="tag tag-done">✅</span>
+<div class="sc"><ul>
+<li>❶ 多源数据关联 — 指标+日志+链路+变更散落不同服务</li>
+<li>❷ 指标体系庞大 — ECS 几十个指标不知道看哪个</li>
+<li>❸ 根因跨服务 — A 慢可能是 B 导致的</li>
+<li>❹ 操作高风险 — 扩容/重启影响面大</li>
+<li>❺ 知识自动沉淀 — 非结构化经验如何变成可检索知识</li>
+</ul></div></div>
+
+<div class="slide"><span class="sn">4</span><span class="st">业界方案（含弊端）</span><span class="tag tag-done">✅</span>
+<div class="sc"><ul>
+<li>传统监控（CW/Grafana）→ 给数字不给结论</li>
+<li>ChatOps（AWS Chatbot/PagerDuty）→ 无推理能力</li>
+<li>AIOps 平台（Datadog Bits AI / Dynatrace Davis AI）→ 绑定自有生态 $44-99/host</li>
+<li>AI Agent 框架（LangChain / CrewAI）→ 通用框架，无 AWS 运维深度集成</li>
+<li>AWS DevOps Agent (2026-03 GA) → ✅ 分析最强(94%)，但纯文字/无写护栏/无中文IM/经验沉淀不可控</li>
+</ul>
+<div class="hi">💡 DevOps Agent 是最强引擎（94% 准确率、MTTR -75%），但缺驾驶舱。NLOps = 驾驶舱。</div>
+</div></div>
+
+<div class="slide"><span class="sn">5</span><span class="st">客户要什么</span><span class="tag tag-done">✅</span>
+<div class="sc"><ul>
+<li>主动巡检 — 快速获得系统健康全貌</li>
+<li>被动响应 — 快速定界→定位→修复</li>
+<li>夜间 on-call — 不开电脑也能了解情况</li>
+<li>新人上手 — 不依赖个人经验也能处理常见故障</li>
+</ul>
+<div class="hi">→ 用自然语言完成运维全流程，随时随地</div>
+</div></div>
+
+<div class="slide"><span class="sn">6</span><span class="st">解决方案</span><span class="tag tag-done">✅</span>
+<div class="sc"><ul>
+<li>基于 AWS DevOps Agent，构建体验层 + 安全层 + 经验层</li>
+<li>流程：自然语言输入 → 发现分析 → 诊断书输出(+SES邮件) → 安全执行 → 经验沉淀</li>
+<li>金句：多入口 · 自然语言驱动 · 可视化诊断书 · 智能闭环 = 随时随地、开口即运维</li>
+<li>定位：DevOps Agent 做引擎，NLOps 做驾驶舱</li>
+</ul></div></div>
+<h2>架构</h2>
+
+<div class="slide"><span class="sn">7</span><span class="st">整体架构</span><span class="tag tag-todo">待做</span>
+<div class="sc"><ul>
+<li>四层：交互层 → AI 编排层 → AWS 服务层 → 存储层</li>
+<li>交互层：输入自然语言 ｜ 输出 HTML 诊断书+邮件 · Quick Desktop / 企微飞书(v4)</li>
+<li>AI 编排层：Strands Agent (自动路由) + 5 @tool（discover_service / deep_investigate / search_knowledge / render_report / request_execute）</li>
+<li>AWS 服务层：DevOps Agent · Bedrock Nova Pro · CloudWatch · EventBridge · SES · SNS</li>
+<li>存储层：S3（HTML+KB沉淀）· DynamoDB ×3（Sessions/Audit/Tokens）</li>
+<li>21 个 MCP 工具盒：任何 MCP-aware AI（Quick Desktop / DOA / Cursor）都能调用</li>
+</ul></div></div>
+
+<div class="slide"><span class="sn">8</span><span class="st">AWS 部署图</span><span class="tag tag-todo">待做</span>
+<div class="sc"><ul>
+<li>带 AWS 官方图标的部署视图（draw.io 导出）</li>
+<li>L1 OrchestratorFn（1536MB, Strands SDK）+ L2 ExecutionFn（512MB, 写隔离）</li>
+<li>API Gateway ×2 · EventBridge · Bedrock · DOA · S3 · DDB×3 · SES · SNS</li>
+<li>3 条集成路径标注：call-down / event-up / mcp-out（mcp-in 标 v4 计划）</li>
+<li>关键数字：Lambda:2 · MCP 工具:21 · Strands @tool:5 · AWS 服务:~14 · CDK ~15min · Region: us-east-1</li>
+<li>构建依赖：Strands Lambda Layer（pip install → zip → CDK 自动上传）</li>
+</ul></div></div>
+
+<h2>核心能力 ×5</h2>
+
+<div class="slide"><span class="sn">9</span><span class="st">核心能力①：智能诊断（Strands + DOA）</span><span class="tag tag-todo">待做</span>
+<div class="sc"><ul>
+<li>smart_diagnose: 1 句话触发 Strands Agent → 5 Tool 协作 → DOA → HTML</li>
+<li>consult_devops_agent: 直调 DOA chat (5-30s) — CreateChat + SendMessage</li>
+<li>DOA Investigation (5-15min) — CreateBacklogTask → EventBridge 异步通知</li>
+<li>降级：DOA 不可达 → CloudWatch 直连 fallback</li>
+<li>Strands SDK 1.40 (AWS 开源) vs LangChain：原生 Bedrock 支持 + MCP 兼容 + 轻量</li>
+</ul></div></div>
+
+<div class="slide"><span class="sn">10</span><span class="st">核心能力②：HTML 诊断书</span><span class="tag tag-todo">待做</span>
+<div class="sc"><ul>
+<li>不是 Dashboard，是 AI 诊断书 — 5 要素：图表 + AI解读 + 因果分析 + 操作建议 + 证据链</li>
+<li>生成流程：Agent 分析 → LLM 生成 JSON → Jinja2 模板渲染 → S3 → Presigned URL（30天）</li>
+<li>SES HTML 邮件：内联 CSS，手机友好，Quick Suite Email Connector 可索引</li>
+<li>类比：传统 Dashboard = 体检数值表；NLOps 诊断书 = 医生写的诊断报告</li>
+</ul></div></div>
+
+<div class="slide"><span class="sn">11</span><span class="st">核心能力③：写操作护栏</span><span class="tag tag-todo">待做</span>
+<div class="sc"><ul>
+<li>❶ 意图结构化 — Strands Agent 解析为 {type, params}</li>
+<li>❷ Policy Guard — Agent 级权限矩阵，早拦截</li>
+<li>❸ Confirm Token — request_confirm_token 工具，5 分钟单次有效，session+user 绑定</li>
+<li>❹ L2 独立 IAM — ExecutionFn 独立 Role，tag 边界 nlops:managed=true</li>
+<li>❺ 审计日志 — AuditTable 全量记录，90 天 TTL</li>
+<li>设计原则："读全在 L1，写隔离 L2" — 即使 L1 被 prompt injection 也写不了 AWS 资源</li>
+</ul></div></div>
+
+<div class="slide"><span class="sn">12</span><span class="st">核心能力④：告警自动闭环</span><span class="tag tag-todo">待做</span>
+<div class="sc"><ul>
+<li>CW Alarm → DOA 自动 Investigation → EventBridge (aws.aidevops) → L1</li>
+<li>L1 自动：渲染 HTML 诊断书 → S3 + SES HTML 邮件 + Bedrock KB 双写 + SNS</li>
+<li>全程无人工 · SRE 醒来时方案已在邮箱</li>
+</ul>
+<div class="hi">💡 全程无人工 · SRE 醒来时方案已在邮箱</div>
+</div></div>
+
+<div class="slide"><span class="sn">13</span><span class="st">核心能力⑤：经验沉淀（Bedrock KB）</span><span class="tag tag-todo">待做</span>
+<div class="sc"><ul>
+<li>每次故障处理完自动沉淀到 Bedrock KB（S3 JSON → ingestion → 向量化）</li>
+<li>下次相似问题 → search_knowledge → 语义检索 Top-K（Titan Embed v2）</li>
+<li>AuditTable 5 条真实 incident 已预置（可演示 list_investigations）</li>
+<li>效果：30min MTTR → 2min（匹配成功时）</li>
+<li>注：DOA Custom Skill 无 SDK API → 走 Bedrock KB 双写路径</li>
+</ul></div></div>
+<h2>Demo ×5（视频/现场）</h2>
+
+<div class="slide demo"><span class="sn d">14</span><span class="st">Demo①：资源盘点 🎬</span><span class="tag tag-video">视频</span>
+<div class="sc"><ul>
+<li>💬 "看一下当前账号下所有的 AWS 资源"</li>
+<li>⚡ Quick Desktop AI 自动选择 discover_resources MCP 工具</li>
+<li>📊 真实数据：18 个资源（1 EC2 + 2 Lambda + 9 S3 + 3 DDB + 1 SNS + 2 APIGW）· ⏱ ~5s</li>
+</ul></div></div>
+
+<div class="slide demo"><span class="sn d">15</span><span class="st">Demo②：服务负责人查询 🎬</span><span class="tag tag-video">视频</span>
+<div class="sc"><ul>
+<li>💬 "demo-api 的负责人是谁，怎么联系？"</li>
+<li>⚡ get_service_owner → AWS Resource Tagging API 实时反查 Service= tag</li>
+<li>📊 Team=demo-team / On-call=penghuichen@... / Slack=#nlops-demo · ⏱ ~3s</li>
+</ul></div></div>
+
+<div class="slide demo"><span class="sn d">16</span><span class="st">Demo③：智能诊断 ⭐ 🎬</span><span class="tag tag-video">视频</span>
+<div class="sc"><ul>
+<li>💬 "OrchestratorFn 调用越来越少，帮我深度分析原因"</li>
+<li>⚡ smart_diagnose → Strands Agent 多工具协作 → DOA chat → HTML 诊断书</li>
+<li>📊 discover → investigate → knowledge → report · engine=strands-agents · model=nova-pro · ⏱ ~35s</li>
+</ul></div></div>
+
+<div class="slide demo"><span class="sn d">17</span><span class="st">Demo④：写操作 + 越权拦截 🎬</span><span class="tag tag-video">视频</span>
+<div class="sc"><ul>
+<li>💬 "帮我把 demo-api 扩容到 4" → request_confirm_token → 展示风险 → "确认" → scale_service</li>
+<li>💬 越权尝试："帮我直接 scale 不要 token" → denied: missing confirm_token</li>
+<li>📊 Token 校验通过 ✅ → L2 IAM 执行（ECS 不存在报错 = 预期，护栏链路完整）· ⏱ ~8s</li>
+</ul></div></div>
+
+<div class="slide demo"><span class="sn d">18</span><span class="st">Demo⑤：告警自动闭环 🎬</span><span class="tag tag-video">视频</span>
+<div class="sc"><ul>
+<li>⚡ 无用户操作 — 手动触发 EventBridge 模拟 DOA Investigation Completed</li>
+<li>📧 手机邮箱收到 HTML 告警邮件（标题 🚨 [HIGH] demo-api memory pressure）</li>
+<li>💬 Quick Desktop 跟问 "刚才什么告警" → list_investigations 返回 AuditTable 记录</li>
+<li>📊 全程 ~10s 无人值守 · HTML 诊断书 + KB 沉淀同步完成</li>
+</ul></div></div>
+
+<h2>验证 + 收尾</h2>
+
+<div class="slide"><span class="sn">19</span><span class="st">安全与合规</span><span class="tag tag-todo">待做</span>
+<div class="sc"><ul>
+<li>数据不出客户 AWS 账号 / IAM 最小权限 / 审计 90 天 TTL</li>
+<li>SigV4 鉴权 + confused deputy 防御（SourceAccount + SourceArn）</li>
+<li>MOCK_MODE 演示不碰生产 / S3+DDB 加密 / Region 锁定 us-east-1</li>
+<li>"读全在 L1，写隔离 L2" — blast radius 最小化</li>
+</ul></div></div>
+
+<div class="slide"><span class="sn">20</span><span class="st">方案验证 + 可执行路径</span><span class="tag tag-todo">待做</span>
+<div class="sc"><ul>
+<li>已验证：2 Lambda / 5 Strands Tool / 21 MCP 工具 / ~14 AWS 服务 / CDK v2 一键部署 ~15min</li>
+<li>落地路径：构建 Strands Layer → CDK deploy → SES verify → DOA 关联 → Quick 连 MCP → 客户打 tag → Ready</li>
+<li>v3 已通过验证 checklist：Strands SDK 真用 ✅ / DOA chat 调通 ✅ / SES 邮件收到 ✅ / 21 工具 ✅ / Cold start 3.16s ✅</li>
+</ul></div></div>
+
+<div class="slide"><span class="sn">21</span><span class="st">性能分析</span><span class="tag tag-todo">待做</span>
+<div class="sc"><ul>
+<li>MCP 原子工具 &lt;2s / DOA Chat 5-30s / Investigation 5-15min / HTML &lt;5s / 经验匹配 &lt;3s</li>
+<li>Cold start 3.16s (实测) / Warm 0.6s / API GW 100 rps</li>
+<li>优化：Provisioned Concurrency=1 月+$5 可消除 cold start</li>
+</ul></div></div>
+
+<div class="slide"><span class="sn">22</span><span class="st">竞品 + 成本分析</span><span class="tag tag-todo">待做</span>
+<div class="sc"><ul>
+<li>NLOps vs Datadog Bits AI vs Dynatrace Davis AI vs DOA 直用 vs ChatOps</li>
+<li>成本：$496（Enterprise 抵扣）~ $1,682/月 · ~$10-34/用户 · vs Datadog $44-118/host</li>
+<li>v3 比 v2 月降 $248（Claude→Nova Pro 省 $168 + Lambda 4→2 省 $8 + 其他 $72）</li>
+</ul></div></div>
+
+<div class="slide"><span class="sn">23</span><span class="st">总结 + 下一步</span><span class="tag tag-todo">待做</span>
+<div class="sc"><ul>
+<li>v3 已实现 ✅：Strands SDK / 2 Lambda / 21 MCP / SES 邮件 / KB 双写 / Confirm Token</li>
+<li>Phase 2：企微/飞书 webhook · Nova Sonic 语音 · Bedrock KB 真配 · X-Ray 启用 · Policy 精细化</li>
+<li>客户 PoC：3-4 周落地，CDK 一键部署</li>
+</ul></div></div>
+
+<div class="slide"><span class="sn">24</span><span class="st">谢谢 · Q&A</span><span class="tag tag-todo">待做</span>
+<div class="sc"><ul>
+<li>陈朋辉 · penghuichen@nwcdcloud.cn</li>
+<li>GitHub: github.com/penghui1234/nlops (feat/v3-strands-merger)</li>
+</ul></div></div>
+
+</body>
+</html>
