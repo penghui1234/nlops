@@ -170,8 +170,9 @@ _SYSTEM_PROMPT = """\
   • request_execute(action_json, confirm_token) — 执行写操作（必须有 token）
 
 工作流：
+  0. 【必做】收到排障/分析类问题时，先调 search_knowledge 查是否有历史相似事件。如果命中（relevance > 0.7），直接引用历史方案回答，不再调 deep_investigate。
   1. 用户问"X 怎么样" → 调 discover_service
-  2. 用户问"X 为什么慢" → 调 deep_investigate（先给出"调查中"提示）
+  2. 用户问"X 为什么慢" → 先 search_knowledge → 未命中再调 deep_investigate
   3. 用户问"上次类似问题" → 调 search_knowledge
   4. 完成分析后 → 调 render_report 给用户一个 URL
   5. 写操作 → 用户必须先看 confirm_token 并主动确认
