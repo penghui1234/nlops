@@ -27,15 +27,22 @@
 ## 2. 整体架构
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          交互层 (Entry Points)                           │
-│                                                                         │
-│  📱 企微/飞书 Bot    🖥️ Amazon Q Desktop    🎙️ Nova Sonic 语音         │
-│       ↓                      ↓                      ↓                   │
-│       └──────────────────────┼──────────────────────┘                   │
-│                              ↓                                          │
-│                    API Gateway (REST)                                    │
-└──────────────────────────────┼──────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          交互层 (Entry Points)                            │
+│                                                                          │
+│  📱 企微/飞书 Bot   🖥️ Quick Desktop   🎙️ Nova Sonic 语音   📧 SES邮件   │
+│   (聊天/Webhook)   (本地MCP桥接)        (WebSocket)         (告警通知)    │
+│       │                  │                    │                  ▲       │
+│       │                  │                    │                  │       │
+│       ▼                  ▼                    ▼                  │       │
+│  ┌────────────┐   ┌─────────────────┐   ┌──────────────┐         │       │
+│  │ POST /chat │   │ POST /mcp       │   │ WSS /voice   │         │       │
+│  │ POST /hook │   │ (JSON-RPC 2.0)  │   │ (双向流)     │         │       │
+│  └─────┬──────┘   └────────┬────────┘   └──────┬───────┘         │       │
+│        └───────────────────┼───────────────────┘                 │       │
+│                            ▼                                     │       │
+│                    API Gateway (REST + WebSocket)                │       │
+└────────────────────────────┼─────────────────────────────────────┼───────┘
                                ↓
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                     编排层 (Orchestration Lambda)                         │
@@ -162,6 +169,110 @@ DOA Mitigation Plan
     │
     ▼ 部署完成 → DOA 验证 → 关闭 Investigation
 ```
+
+---
+
+## 3.4 Quick Desktop 接入路径（核心入口之一）
+
+Quick Desktop 是中国客户最常用的 AWS 工具入口，v4 仍作为一等公民支持。
+
+```
+┌─────────────────┐
+│ Quick Desktop   │
+│ (Mac/Win 客户端)│
+│  内置 LLM:      │
+│  Claude / Nova  │
+└────────┬────────┘
+         │ stdio (本地)
+         ▼
+┌──────────────────────────┐
+│ mcp-bridge (Node.js)     │
+│ • 翻译 stdio ↔ HTTP      │
+│ • 转发 JSON-RPC 请求     │
+└────────┬─────────────────┘
+         │ HTTPS POST
+         ▼
+┌──────────────────────────────────────┐
+│ API Gateway: /mcp-quick              │
+│ (NoAuth, NLOps 专用)                  │
+└────────┬─────────────────────────────┘
+         ▼
+┌──────────────────────────────────────┐
+│ Orchestration Lambda → MCP Handler   │
+│ 暴露 5 个精简后的 NLOps MCP 工具      │
+└──────────────────────────────────────┘
+```
+
+### 与 v3 对比
+
+| 维度 | v3 | v4 |
+|------|----|----|
+| MCP 工具数 | 21 个（自己造的"Agent"） | **5 个**（只补 DOA 不具备的） |
+| 是否自建 LLM 编排 | 是（Strands Agent） | **否**（Quick 自己有 LLM） |
+| 工具职责 | 涵盖发现/分析/修复/报告/知识 | **只做 DOA 的"补充层"** |
+| 写操作护栏 | Confirm Token + L2 Lambda | **MCP 工具直接调 SSM Runbook**（SSM 自带审批） |
+
+### v4 暴露的 5 个 MCP 工具
+
+| 工具 | 用途 | 何时调用 |
+|------|------|---------|
+| `query_doa` | 通过 DOA Chat 一句话问诊 | "demo-api 怎么样？" |
+| `start_investigation` | 启动 DOA 深度调查 | "为什么 demo-api 慢？" |
+| `get_html_report` | 生成 HTML 诊断书 URL | 调查结束后给用户分享链接 |
+| `trigger_runbook` | 调用 SSM Automation 修复 | "扩容到 4 个实例" |
+| `notify_im` | 推送结果到企微/飞书频道 | 用户要求 "通知一下团队" |
+
+### Quick Desktop 用户对话示例（v4）
+
+```
+用户 (Quick Desktop): 看下 demo-api 服务怎么样
+Quick LLM (Claude): [调 query_doa("demo-api 当前健康状态")]
+                    → DOA 返回：P99 320ms，RDS 连接池 78%
+Quick LLM: demo-api 当前 P99 延迟 320ms 偏高，
+           主要是 RDS Proxy 连接池使用率 78%。
+           需要我深入调查吗？
+
+用户: 调查下
+Quick LLM: [调 start_investigation("demo-api latency", "RDS")]
+           → 返回 inv-xyz，预计 5-15 分钟
+Quick LLM: 已启动调查 inv-xyz，5-15 分钟后完成。
+           完成后我会给你诊断书链接。
+
+(15 分钟后用户回来)
+用户: 调查好了吗？
+Quick LLM: [调 get_html_report("inv-xyz")]
+           → https://nlops-reports.s3.../inv-xyz.html
+Quick LLM: 调查完成。根因是 RDS max_connections 不足。
+           完整诊断书：[链接]
+           建议执行 SSM Runbook: nlops-rds-proxy-expand。
+
+用户: 帮我执行
+Quick LLM: [调 trigger_runbook("nlops-rds-proxy-expand", {...}, dry_run=true)]
+           → 显示风险卡片
+Quick LLM: 这是写操作。计划：扩容 max_connections 200→400。
+           风险：低（无需重启）。确认执行？
+
+用户: 确认
+Quick LLM: [调 trigger_runbook(... dry_run=false)]
+           → SSM 执行成功
+Quick LLM: ✅ 已扩容。已通过 SSM 审计日志记录。
+```
+
+### mcp-bridge 实现要点
+
+`mcp-bridge/index.js` 保持 v3 实现不变（已成熟），只更新工具数量：
+
+```javascript
+// v3: 21 tools forwarded
+// v4: 5 tools forwarded
+const MCP_API_URL = process.env.NLOPS_MCP_URL  // 从环境变量读，不再硬编码
+                  || 'https://xxx.execute-api.us-east-1.amazonaws.com/prod/mcp-quick';
+```
+
+修复 v3 已知问题：
+- ✅ URL 改为环境变量（v3 是硬编码）
+- ✅ 添加 30s 超时
+- ✅ 错误信息透传到 Quick LLM
 
 ---
 
@@ -375,8 +486,9 @@ vs v3: 月成本降低 ~$240（去掉 Bedrock KB OpenSearch $150 + L2 Lambda + S
 ### Phase 2: 体验层（1 周）
 - [ ] 实现 HTML 诊断书渲染（EventBridge → Report）
 - [ ] 注册 NLOps MCP Server 到 Agent Space（5 tools）
+- [ ] **Quick Desktop 接入**：复用 v3 mcp-bridge，改用 5 个新工具
 - [ ] 接入企微/飞书 Bot
-- [ ] 验证：完整告警闭环 + HTML 诊断书 + IM 通知
+- [ ] 验证：Quick Desktop 完整对话流 + 告警闭环 + HTML 诊断书 + IM 通知
 
 ### Phase 3: 语音 + 修复（1 周）
 - [ ] Nova Sonic 语音交互实现
@@ -411,7 +523,7 @@ DevOps Agent 是引擎，NLOps 是驾驶舱：
 
 | 维度 | DevOps Agent 原生 | NLOps v4 增量 |
 |------|-------------------|---------------|
-| 入口 | Operator Console / Slack | + 企微/飞书/语音/Q Desktop |
+| 入口 | Operator Console / Slack | + Quick Desktop / 企微/飞书 / Nova Sonic 语音 |
 | 输出 | 文本 + Slack 消息 | + HTML 诊断书（图表+解读+证据链） |
 | 经验 | Skills（手动创建） | + 自动从 Investigation 生成 Skill |
 | 修复 | Mitigation Plan（建议） | + SSM 自动执行 + Kiro 代码修复 |
