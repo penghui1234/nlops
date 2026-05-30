@@ -284,17 +284,39 @@ def _handle_doa_event(event: dict) -> dict:
     detail = event.get("detail") or {}
     detail_type = event.get("detail-type", "")
 
-    task_id = (detail.get("taskId") or detail.get("investigationId")
-               or detail.get("evaluationId") or "")
-    severity = (detail.get("severity") or "info").lower()
-    status = (detail.get("status") or "").upper()
+    # DOA EB event structure (GA): { version, metadata: {agent_space_id, task_id,
+    # execution_id}, data: {task_type, priority, status, created_at, updated_at} }
+    metadata = detail.get("metadata") or {}
+    data = detail.get("data") or {}
+
+    # DEBUG: log full event structure for first time understanding
+    logger.info("eb.event_dump", extra={
+        "trace_id": trace_id,
+        "source": event.get("source"),
+        "detail_type": detail_type,
+        "detail_keys": list(detail.keys()) if isinstance(detail, dict) else [],
+        "detail_preview": json.dumps(detail, default=str)[:1500],
+    })
+
+    # Try many possible field names: nested metadata/data first, then flat
+    task_id = (metadata.get("task_id") or metadata.get("taskId")
+               or detail.get("taskId") or detail.get("investigationId")
+               or detail.get("evaluationId") or detail.get("task_id")
+               or detail.get("backlogTaskId") or "")
+    severity = (data.get("priority") or detail.get("severity")
+                or detail.get("priority") or "info").lower()
+    status = (data.get("status") or detail.get("status")
+              or detail.get("state") or "").upper()
+    agent_space = (metadata.get("agent_space_id") or metadata.get("agentSpaceId")
+                   or detail.get("agentSpaceId") or detail.get("agent_space_id")
+                   or os.getenv("DOA_AGENT_SPACE_ID", ""))
 
     logger.info("eb.received", extra={
         "trace_id": trace_id, "detail_type": detail_type,
         "task_id": task_id, "status": status,
     })
 
-    if status and status not in ("COMPLETED", "RESOLVED"):
+    if status and status not in ("COMPLETED", "RESOLVED", ""):
         AUDIT.log(trace_id, "EventBridge", detail_type, "skipped",
                   {"status": status})
         return {"skipped": True, "reason": f"status={status}"}
@@ -303,16 +325,19 @@ def _handle_doa_event(event: dict) -> dict:
     inv = _doa.get_investigation(task_id) if task_id else {}
 
     finding = {
-        "title": detail.get("title") or inv.get("title") or detail_type,
+        "title": ((inv.get("title") if isinstance(inv, dict) else "")
+                  or data.get("title") or detail.get("title")
+                  or detail_type),
         "investigation_id": task_id,
         "severity": severity,
         "service": detail.get("service", ""),
-        "root_cause": (detail.get("rootCause") or {}).get("summary", "")
+        "root_cause": ((detail.get("rootCause") or {}).get("summary", "")
             if isinstance(detail.get("rootCause"), dict)
-            else inv.get("description", "")[:1000],
+            else (inv.get("description", "")[:1500]
+                  if isinstance(inv, dict) else "")),
         "operator_portal_url": (
             f"https://console.aws.amazon.com/devops-agent/spaces/"
-            f"{os.getenv('DOA_AGENT_SPACE_ID', '')}/tasks/{task_id}"
+            f"{agent_space}/tasks/{task_id}" if task_id else ""
         ),
         "timeline": inv.get("timeline", []) if isinstance(inv, dict) else [],
         "ts": int(time.time()),
