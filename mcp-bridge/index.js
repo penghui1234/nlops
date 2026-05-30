@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 /**
- * NLOps MCP Bridge
- * 
- * 这是一个本地 MCP 服务器，使用 stdio 传输与 Quick Desktop 通信。
- * 它将请求转发到 AWS API Gateway 上部署的 MCP 服务端点。
+ * NLOps v4 MCP Bridge
+ *
+ * Local stdio MCP server for Quick Desktop, forwards JSON-RPC to AWS API GW.
+ *
+ * v4 changes vs v3:
+ *   - Updated default URL to v4 NLOpsV4Stack endpoint
+ *   - Now exposes 5 tools (was 21 in v3)
+ *   - Read URL from env NLOPS_MCP_URL (fallback to default)
+ *   - Added 60s timeout for start_investigation
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -13,76 +18,72 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
-// AWS MCP API 端点
-const MCP_API_URL = 'https://y20o7icdbb.execute-api.us-east-1.amazonaws.com/prod/mcp-quick';
+// Resolve MCP API URL: env > default
+const MCP_API_URL = process.env.NLOPS_MCP_URL
+  || 'https://0ij69qdk8c.execute-api.us-east-1.amazonaws.com/prod/mcp-quick';
 
-// 创建 MCP 服务器
+const TIMEOUT_MS = parseInt(process.env.NLOPS_MCP_TIMEOUT_MS || '60000', 10);
+
+console.error(`[NLOps v4] MCP Bridge starting...`);
+console.error(`[NLOps v4] API URL: ${MCP_API_URL}`);
+console.error(`[NLOps v4] Timeout: ${TIMEOUT_MS}ms`);
+
 const server = new Server(
-  { name: 'nlops-mcp-bridge', version: '1.0.0' },
+  { name: 'nlops-v4-mcp-bridge', version: '4.0.0' },
   { capabilities: { tools: {} } }
 );
 
-// 转发请求到 AWS API
 async function forwardToAws(method, params) {
   const requestId = Date.now();
-  const body = {
-    jsonrpc: '2.0',
-    id: requestId,
-    method,
-    params
-  };
+  const body = { jsonrpc: '2.0', id: requestId, method, params };
 
-  // 使用 AbortController 设置 30 秒超时
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
     const response = await fetch(MCP_API_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: controller.signal
+      signal: controller.signal,
     });
 
     if (!response.ok) {
-      throw new Error(`AWS API error: ${response.status} ${response.statusText}`);
+      const errBody = await response.text().catch(() => '');
+      throw new Error(`AWS API ${response.status}: ${errBody.substring(0, 200)}`);
     }
 
     const result = await response.json();
-    
     if (result.error) {
-      throw new Error(result.error.message || 'Unknown error');
+      throw new Error(result.error.message || JSON.stringify(result.error));
     }
-    
     return result.result;
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error(`Request timed out after ${TIMEOUT_MS}ms`);
+    }
+    throw err;
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-// 处理工具列表请求
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const result = await forwardToAws('tools/list', {});
-  return result;
+  return await forwardToAws('tools/list', {});
 });
 
-// 处理工具调用请求
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  const result = await forwardToAws('tools/call', { name, arguments: args });
-  return result;
+  return await forwardToAws('tools/call', { name, arguments: args });
 });
 
-// 启动服务器
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('NLOps MCP Bridge started');
+  console.error('[NLOps v4] MCP Bridge ready');
 }
 
 main().catch((error) => {
-  console.error('Fatal error:', error);
+  console.error('[NLOps v4] Fatal error:', error);
   process.exit(1);
 });

@@ -59,7 +59,13 @@ def handler(event: dict, context) -> dict:
     if src in ("aws.devopsagent", "aws.aidevops"):  # GA + preview names
         return _handle_doa_event(event)
 
-    # 2. API Gateway proxy event — branch by path
+    # 2. SNS event (CW Alarm via SNS subscription)
+    if "Records" in event and event["Records"]:
+        first_rec = event["Records"][0]
+        if first_rec.get("EventSource") == "aws:sns" or first_rec.get("Sns"):
+            return _handle_alarm_webhook(event)
+
+    # 3. API Gateway proxy event — branch by path
     path = (event.get("path") or event.get("resource") or "").lower()
     method = (event.get("httpMethod") or "").upper()
 
@@ -186,15 +192,23 @@ def _handle_alarm_webhook(event: dict) -> dict:
 
     # CloudWatch sends via SNS -> Lambda; sometimes nested
     if "Records" in body:
-        # SNS event
+        # SNS event from raw event
         sns_msg = body["Records"][0].get("Sns", {}).get("Message", "{}")
         try:
             body = json.loads(sns_msg)
         except json.JSONDecodeError:
             pass
+    elif "Records" in event:
+        # Direct SNS event (Lambda invoked by SNS subscription)
+        sns_msg = event["Records"][0].get("Sns", {}).get("Message", "{}")
+        try:
+            body = json.loads(sns_msg)
+        except json.JSONDecodeError:
+            body = {"raw": sns_msg}
 
-    alarm_name = body.get("AlarmName") or body.get("alarmName") or body.get("title", "Unknown Alarm")
-    state = body.get("NewStateValue") or body.get("state") or "ALARM"
+    alarm_name = (body.get("AlarmName") or body.get("alarmName")
+                  or body.get("title") or "Unknown Alarm")
+    state = (body.get("NewStateValue") or body.get("state") or "ALARM")
     reason = body.get("NewStateReason") or body.get("reason", "")
     region = body.get("Region") or _REGION
 
