@@ -687,9 +687,105 @@
   </div>
 </div>
 
+<!-- Performance Analysis (PPT page 17) -->
+<div class="section">
+  <h2>1️⃣1️⃣ 性能分析</h2>
+  <h3>v4 5 个 MCP 工具耗时</h3>
+  <table class="cmp">
+    <thead>
+      <tr><th>工具</th><th>耗时</th><th>说明</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>query_doa</code></td><td>5-30s</td><td>受 DOA Chat 响应时间影响,API GW 29s 限制</td></tr>
+      <tr><td><code>start_investigation</code></td><td>~2s</td><td>异步,立即返回 task_id</td></tr>
+      <tr><td><code>get_html_report</code></td><td>3-5s</td><td>GetBacklogTask + ListJournalRecords + Jinja2 + S3 上传</td></tr>
+      <tr><td><code>trigger_runbook</code></td><td>1-3s</td><td>SSM StartAutomationExecution</td></tr>
+      <tr><td><code>notify_im</code></td><td>1-2s</td><td>SES SendEmail / 飞书 webhook POST</td></tr>
+    </tbody>
+  </table>
+  <h3>核心能力实现状态</h3>
+  <table class="cmp">
+    <thead>
+      <tr><th>核心能力</th><th>实现状态</th><th>依赖</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>智能诊断</td><td><span class="status-done">✅ 已实现</span></td><td>DOA Investigation 异步调查</td></tr>
+      <tr><td>HTML 诊断书</td><td><span class="status-done">✅ 已实现</span></td><td>Jinja2 + S3 + marked.js + ECharts</td></tr>
+      <tr><td>告警自动闭环</td><td><span class="status-done">✅ 已实现</span></td><td>CW Alarm → SNS → Lambda → DOA → 飞书+邮件</td></tr>
+      <tr><td>飞书 @机器人</td><td><span class="status-done">✅ 已实现</span></td><td>Custom App + 异步两段式</td></tr>
+      <tr><td>故障公告自动化</td><td><span class="status-done">✅ 已实现</span></td><td>Bedrock Nova Pro</td></tr>
+      <tr><td>经验自动沉淀</td><td><span class="status-done">✅ 已实现</span></td><td>Nova Pro + S3 + DOA Skills</td></tr>
+      <tr><td>SSM Runbook 修复</td><td><span class="status-done">✅ 已实现</span></td><td>2 个预置 Document</td></tr>
+      <tr><td>多模态架构图分析</td><td><span class="status-todo">🔮 Roadmap</span></td><td>Phase 4 (Nova Pro Vision)</td></tr>
+      <tr><td>语音运维</td><td><span class="status-todo">🔮 Roadmap</span></td><td>Phase 4 (Nova Sonic + ECS WebSocket)</td></tr>
+      <tr><td>代码级修复 (Kiro)</td><td><span class="status-todo">🔮 Roadmap</span></td><td>Phase 3 (Agent-ready Spec)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Competitor Analysis (PPT page 18) -->
+<div class="section">
+  <h2>1️⃣2️⃣ 竞品分析</h2>
+  <table class="cmp">
+    <thead>
+      <tr><th>维度</th><th>NLOps v4 (我们)</th><th>Datadog Bits AI</th><th>Dynatrace Davis AI</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>定位</strong></td>
+        <td class="ours">AWS 运维驾驶舱:体验层+安全层+经验层</td>
+        <td>Always-on SRE Agent (2025-12 发布)</td>
+        <td>Causal AI AIOps · Forrester Leader Q2 2025</td>
+      </tr>
+      <tr>
+        <td><strong>入口</strong></td>
+        <td class="ours">中文飞书/Quick/Web/MCP 多入口</td>
+        <td>仅 Datadog Chat</td>
+        <td>仅 DT App / Chat</td>
+      </tr>
+      <tr>
+        <td><strong>诊断输出</strong></td>
+        <td class="ours">HTML 诊断书 + AI 解读 + 工具标签 + 中文公告</td>
+        <td>文本摘要</td>
+        <td>问题卡片</td>
+      </tr>
+      <tr>
+        <td><strong>经验沉淀</strong></td>
+        <td class="ours">DOA Skills + 自动从 Investigation 生成新 Skill</td>
+        <td>❌</td>
+        <td>❌</td>
+      </tr>
+      <tr>
+        <td><strong>观测平台绑定</strong></td>
+        <td class="ours">无绑定 (DOA 支持多源)</td>
+        <td>Datadog Only</td>
+        <td>Dynatrace Only</td>
+      </tr>
+      <tr>
+        <td><strong>月成本</strong></td>
+        <td class="ours">~$9/人 (50 人团队)</td>
+        <td>$44-118/host/月</td>
+        <td>$69-99/host/月</td>
+      </tr>
+      <tr>
+        <td><strong>AWS 深度</strong></td>
+        <td class="ours">DOA 原生 + 5 MCP 工具补强</td>
+        <td>通用 APM,非 AWS 原生</td>
+        <td>通用 APM,非 AWS 原生</td>
+      </tr>
+      <tr>
+        <td><strong>中国市场</strong></td>
+        <td class="ours">飞书原生集成,可降级走 CW Investigations</td>
+        <td>无中国 IM</td>
+        <td>无中国 IM</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
 <!-- Cost -->
 <div class="section">
-  <h2>7️⃣ 成本估算（50 用户/月）</h2>
+  <h2>1️⃣3️⃣ 成本估算（50 用户/月）</h2>
   <table class="cost">
     <thead>
       <tr><th>服务</th><th>规格</th><th>月费用</th></tr>
@@ -712,7 +808,7 @@
 
 <!-- Roadmap -->
 <div class="section">
-  <h2>8️⃣ 路线图</h2>
+  <h2>1️⃣4️⃣ 路线图</h2>
   <ul class="phase-list">
     <li class="done">
       <strong>Phase 1 · 核心闭环 ✅</strong><br/>
@@ -741,9 +837,64 @@
   </ul>
 </div>
 
+<!-- Deployment Diagram (PPT page 22) -->
+<div class="section">
+  <h2>1️⃣5️⃣ 部署架构（us-east-1）</h2>
+  <p>NLOps v4 采用最小化 Serverless 部署:1 个 Lambda、2 张 DDB 表、1 个 S3 bucket、1 个 API Gateway、2 个 SSM Document。</p>
+  <pre class="arch-diagram">
+┌──────────────────────────────────────────────────────────────────────┐
+│  入口: <span class="highlight">飞书 @机器人 · Quick Desktop · CW Alarm · DOA EventBridge</span>     │
+└────────────────────────────┬─────────────────────────────────────────┘
+                             ↓
+   ┌─────────────────────────────────────────────────────────────┐
+   │   <span class="highlight">API Gateway (REST)</span>                                          │
+   │   /chat /lark-event /webhook-incoming /mcp /mcp-quick       │
+   └─────────────────────────┬───────────────────────────────────┘
+                             ↓
+   ┌─────────────────────────────────────────────────────────────┐
+   │   <span class="highlight">Orchestrator Lambda</span>  (1024MB · Python 3.12 · 4 路由)        │
+   │                                                              │
+   │   ├── api_handler.py    主路由 + EB Handler                   │
+   │   ├── lark_handler.py   飞书事件 (异步两段式)                  │
+   │   ├── v4_tools.py       5 个 MCP 工具                         │
+   │   ├── ai_enhance.py     Nova Pro 增强 (公告/摘要/Skill/图)    │
+   │   └── report/           Jinja2 + 模板                         │
+   └─────────┬─────────┬───────────┬────────────┬─────────────────┘
+             ↓         ↓           ↓            ↓
+        ┌────────┐ ┌────────┐ ┌─────────┐  ┌──────────────┐
+        │ <span class="highlight">DOA</span>    │ │ <span class="highlight">Bedrock</span>│ │ <span class="highlight">S3</span>      │  │ <span class="highlight">SSM Runbook</span>  │
+        │ Agent  │ │ Nova   │ │ Reports │  │ ECS / RDS    │
+        │ Space  │ │ Pro    │ │ Skills  │  │ (2 docs)     │
+        │        │ │        │ │ Bucket  │  │              │
+        │ 3 Skills│ │        │ │         │  │              │
+        └────────┘ └────────┘ └─────────┘  └──────────────┘
+                                  ↑
+                              <span class="highlight">DynamoDB × 2</span>
+                              Sessions · Audit
+                              <span class="highlight">SES</span> 邮件 · <span class="highlight">SNS</span> 告警
+                              <span class="highlight">EventBridge</span> Investigation Completed
+</pre>
+  <h3>关键资源</h3>
+  <table class="cmp">
+    <thead>
+      <tr><th>资源</th><th>名称/规格</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>API Gateway</td><td>0ij69qdk8c (5 routes,prod stage)</td></tr>
+      <tr><td>Lambda Function</td><td>NLOpsV4Stack-OrchestratorFn</td></tr>
+      <tr><td>DOA Agent Space</td><td>nlops-agent-space (52e43342-...)</td></tr>
+      <tr><td>S3 Reports Bucket</td><td>nlopsv4stack-reportbucket... (公开 /reports/*)</td></tr>
+      <tr><td>SNS Alarm Topic</td><td>NLOpsV4Stack-AlarmTopic (CW → Lambda)</td></tr>
+      <tr><td>EventBridge Rule</td><td>aws.devopsagent → Investigation Completed</td></tr>
+      <tr><td>SSM Documents</td><td>nlops-ecs-scale · nlops-rds-proxy-expand</td></tr>
+      <tr><td>Bedrock Layer</td><td>BotocoreLayer (boto3 1.42 + jinja2)</td></tr>
+    </tbody>
+  </table>
+</div>
+
 <!-- Differentiation -->
 <div class="section">
-  <h2>9️⃣ 核心差异化 (vs DevOps Agent 原生)</h2>
+  <h2>1️⃣6️⃣ 核心差异化 (vs DevOps Agent 原生)</h2>
   <table class="cmp">
     <thead>
       <tr><th>维度</th><th>DOA 原生</th><th>NLOps v4 增量</th></tr>
