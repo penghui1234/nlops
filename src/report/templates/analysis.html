@@ -521,6 +521,7 @@ graph LR
 </div>
 
 <script>
+{% autoescape false %}
 // ============= Tab switching =============
 document.querySelectorAll('.tab').forEach(function(t) {
   t.addEventListener('click', function() {
@@ -540,13 +541,13 @@ document.querySelectorAll('.tab').forEach(function(t) {
 (function() {
   var reportEl = document.getElementById('ai-report');
   if (reportEl && typeof marked !== 'undefined') {
-    var md = {{ finding.report_md | tojson if finding.report_md else '""' }};
+    var md = {{ (finding.report_md | tojson | safe) if finding.report_md else '""' }};
     if (md) reportEl.innerHTML = marked.parse(md);
     else reportEl.innerHTML = '<em>暂无完整调查内容</em>';
   }
   var sumEl = document.getElementById('internal-summary');
   if (sumEl && typeof marked !== 'undefined') {
-    var sumMd = {{ finding.internal_summary | tojson if finding.internal_summary else '""' }};
+    var sumMd = {{ (finding.internal_summary | tojson | safe) if finding.internal_summary else '""' }};
     if (sumMd) sumEl.innerHTML = marked.parse(sumMd);
   }
 })();
@@ -557,7 +558,7 @@ document.querySelectorAll('.tab').forEach(function(t) {
   var dom = document.getElementById('metrics-chart');
   if (dom) {
     window._chartMetrics = echarts.init(dom);
-    window._chartMetrics.setOption({{ finding.metrics_chart | tojson }});
+    window._chartMetrics.setOption({{ finding.metrics_chart | tojson | safe }});
     window.addEventListener('resize', function() { window._chartMetrics.resize(); });
   }
 })();
@@ -584,6 +585,7 @@ function copyURL() {
     alert('✅ 报告链接已复制');
   });
 }
+{% endautoescape %}
 </script>
 </body>
 </html>
