@@ -161,6 +161,8 @@ class NLOpsV4Stack(Stack):
                 "ecs:DescribeServices",
                 "rds:DescribeDBInstances",
                 "iam:PassRole",
+                # Self-invoke for async Lark event processing
+                "lambda:InvokeFunction",
             ],
             resources=["*"],
         ))

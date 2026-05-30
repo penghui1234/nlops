@@ -4,22 +4,27 @@ Handles events from Lark's event subscription:
   - url_verification (initial setup challenge)
   - im.message.receive_v1 (user sends or @-mentions the bot)
 
-Flow:
-  User: @NLOps demo-api 怎么样了
-       ↓
-  Lark sends event → our /lark-event endpoint
-       ↓
-  This handler:
-    1. Extract message text (strip @-mention)
-    2. Decide intent: chat / start investigation / get report / runbook
-    3. Reply with quick acknowledgement
-    4. (Async) Call DOA + reply with result
+⚠️ Important: Lark requires HTTP 200 within 3 seconds, else it retries.
+Since DOA chat / start_investigation can take 5-30s, we use a two-stage flow:
+
+  Stage 1 (sync, < 1s):
+    - Receive event from Lark
+    - If url_verification: respond directly with challenge
+    - Otherwise: invoke self async with event payload
+    - Return 200 OK immediately
+
+  Stage 2 (async, processed in background Lambda):
+    - Triggered via lambda.invoke (InvocationType=Event)
+    - Process message, call DOA, reply via Lark API
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
+
+import boto3
 
 from common.logging_utils import get_logger
 from tools.devops_agent import DevOpsAgent
@@ -29,10 +34,24 @@ logger = get_logger(__name__)
 
 _doa = DevOpsAgent()
 _lark_app = LarkApp()
+_lambda = boto3.client("lambda", region_name=os.getenv("AWS_REGION", "us-east-1"))
+_SELF_FN = os.getenv("AWS_LAMBDA_FUNCTION_NAME", "")
 
 
 def handler(event: dict, context) -> dict:
-    """Entry point for /lark-event POST."""
+    """Entry point for /lark-event POST.
+
+    Two modes:
+      1. Sync HTTP request from API Gateway (Lark webhook)
+         → ack fast (< 3s), kick off async self-invoke for processing
+      2. Async invocation from self (event["_async_lark"] == True)
+         → actually process the message and reply
+    """
+    # Mode 2: self-invoked async — do the heavy work
+    if event.get("_async_lark") is True:
+        return _process_async(event)
+
+    # Mode 1: sync HTTP — ack fast and kick off async
     body = _parse_body(event)
 
     # === 1. URL Verification (initial setup) ===
@@ -47,24 +66,73 @@ def handler(event: dict, context) -> dict:
 
     # === 2. Encrypted event (if Encrypt Key configured) ===
     if "encrypt" in body:
-        # We don't enable encryption for demo simplicity
         logger.warning("lark.encrypted_event_received")
         return _resp(400, {"error": "encryption not configured"})
 
-    # === 3. Event callback ===
+    # === 3. Event callback — async dispatch ===
     schema = body.get("schema", "")
     header = body.get("header", {})
     event_type = header.get("event_type", "")
+    event_id = header.get("event_id", "")
 
     logger.info("lark.event_received", extra={
-        "schema": schema,
-        "event_type": event_type,
+        "schema": schema, "event_type": event_type, "event_id": event_id,
     })
 
-    if event_type == "im.message.receive_v1":
-        return _handle_message(body)
+    if event_type != "im.message.receive_v1":
+        return _resp(200, {"status": "ignored", "event_type": event_type})
 
-    return _resp(200, {"status": "ignored", "event_type": event_type})
+    # De-dup: Lark may retry. Use event_id (deterministic per delivery).
+    # We use a simple per-container in-memory cache; for cross-container dedup
+    # use DynamoDB.
+    if _seen_event(event_id):
+        logger.info("lark.duplicate_event_skipped", extra={"event_id": event_id})
+        return _resp(200, {"status": "duplicate", "event_id": event_id})
+
+    # Async self-invoke for processing
+    try:
+        if _SELF_FN:
+            _lambda.invoke(
+                FunctionName=_SELF_FN,
+                InvocationType="Event",  # async, non-blocking
+                Payload=json.dumps({"_async_lark": True, "lark_body": body}).encode(),
+            )
+            logger.info("lark.async_dispatched", extra={"event_id": event_id})
+    except Exception as exc:
+        logger.exception("lark.dispatch_failed")
+
+    # Return 200 immediately (within Lark's 3s window)
+    return _resp(200, {"status": "queued", "event_id": event_id})
+
+
+# ============================================================ #
+# Per-container event_id cache (in-memory, ~5 min sliding window)
+# ============================================================ #
+_seen: dict[str, float] = {}
+_SEEN_TTL_SEC = 300
+
+
+def _seen_event(event_id: str) -> bool:
+    """Return True if event_id was seen recently. Mark it seen otherwise."""
+    if not event_id:
+        return False
+    import time
+    now = time.time()
+    # Garbage collect old entries (cheap, runs each call)
+    expired = [k for k, t in _seen.items() if now - t > _SEEN_TTL_SEC]
+    for k in expired:
+        _seen.pop(k, None)
+    if event_id in _seen:
+        return True
+    _seen[event_id] = now
+    return False
+
+
+# ============================================================ #
+def _process_async(invoke_event: dict) -> dict:
+    """Run in a separate Lambda invocation (no time pressure for 3s ack)."""
+    body = invoke_event.get("lark_body", {})
+    return _handle_message(body)
 
 
 # ============================================================ #
