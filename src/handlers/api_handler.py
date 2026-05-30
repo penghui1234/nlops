@@ -80,6 +80,10 @@ def handler(event: dict, context) -> dict:
     if path == "/chat" or "chat" in path or "webhook" in path:
         return _handle_chat(event)
 
+    if path == "/lark-event" or "lark-event" in path:
+        from handlers.lark_handler import handler as lark_h
+        return lark_h(event, context)
+
     # Default — health probe
     return _resp(200, {"service": "nlops-v4", "status": "ok",
                        "tools": list(MCP_SERVER._tools.keys())})

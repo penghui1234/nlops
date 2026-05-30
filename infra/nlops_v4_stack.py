@@ -99,6 +99,9 @@ class NLOpsV4Stack(Stack):
             "ALERT_EMAIL_TO": "penghuichen@nwcdcloud.cn",
             # Lark (飞书) custom robot incoming webhook
             "LARK_WEBHOOK_URL": "https://open.feishu.cn/open-apis/bot/v2/hook/21826540-97a0-46b7-81c3-677b17c6bc7a",
+            # Lark (飞书) Custom App credentials (set via console after creating the app)
+            "LARK_APP_ID": "",
+            "LARK_APP_SECRET": "",
             "LOG_LEVEL": "INFO",
         }
 
@@ -208,6 +211,10 @@ class NLOpsV4Stack(Stack):
         )
         # /webhook-incoming — public (signed by HMAC upstream)
         api.root.add_resource("webhook-incoming").add_method(
+            "POST", authorization_type=apigw.AuthorizationType.NONE,
+        )
+        # /lark-event — public (Lark verifies via app_id/secret on our side)
+        api.root.add_resource("lark-event").add_method(
             "POST", authorization_type=apigw.AuthorizationType.NONE,
         )
         # /mcp — IAM auth (for DOA's MCP integration)
