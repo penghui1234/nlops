@@ -25,6 +25,7 @@ from common.logging_utils import get_logger
 from mcp_server.server import McpServer
 from report.generator import ReportGenerator
 from tools.devops_agent import DevOpsAgent
+from tools.lark_bot import LarkBot
 from tools.ssm_runbook import SSMRunbook
 
 logger = get_logger(__name__)
@@ -225,20 +226,31 @@ def trigger_runbook(document_name: str, parameters_json: str = "{}",
 @server.tool
 def notify_im(channel: str, subject: str, body: str,
               html_url: str = "") -> dict[str, Any]:
-    """Push a message to an IM channel (currently SES email; WeCom/Lark TBD).
+    """Push a message to an IM channel: email (SES) or lark (飞书 webhook).
 
     Args:
-        channel: 'email' | 'wecom' | 'lark' (only 'email' implemented in v4 MVP).
-        subject: Message subject.
-        body: Plain-text body (markdown supported in HTML email).
-        html_url: Optional HTML diagnostic URL to include.
+        channel: 'email' | 'lark' | 'wecom'
+        subject: Message subject / card title
+        body: Plain-text or markdown body
+        html_url: Optional HTML diagnostic URL → rendered as a button in card
     """
     if channel not in ("email", "wecom", "lark"):
         return {"status": "error", "error": f"unknown channel: {channel}"}
 
-    if channel != "email":
-        return {"status": "todo", "note": f"{channel} integration not yet implemented in v4 MVP"}
+    if channel == "wecom":
+        return {"status": "todo", "note": "wecom integration not yet implemented in v4 MVP"}
 
+    if channel == "lark":
+        lark = LarkBot()
+        if not lark.configured:
+            return {"status": "error", "error": "LARK_WEBHOOK_URL not set"}
+        url_buttons = [("📊 查看完整诊断书", html_url)] if html_url else None
+        return lark.send_card(
+            title=subject, body_md=body, template="blue",
+            url_buttons=url_buttons,
+        )
+
+    # channel == "email"
     if not _ALERT_EMAIL_TO or not _ALERT_EMAIL_FROM:
         return {"status": "error", "error": "ALERT_EMAIL_FROM / ALERT_EMAIL_TO not set"}
 

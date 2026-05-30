@@ -97,6 +97,8 @@ class NLOpsV4Stack(Stack):
             # SES alert email
             "ALERT_EMAIL_FROM": "penghuichen@nwcdcloud.cn",
             "ALERT_EMAIL_TO": "penghuichen@nwcdcloud.cn",
+            # Lark (飞书) custom robot incoming webhook
+            "LARK_WEBHOOK_URL": "https://open.feishu.cn/open-apis/bot/v2/hook/21826540-97a0-46b7-81c3-677b17c6bc7a",
             "LOG_LEVEL": "INFO",
         }
 

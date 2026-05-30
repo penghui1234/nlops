@@ -34,6 +34,7 @@ from common.logging_utils import get_logger
 from mcp_server.v4_tools import server as MCP_SERVER  # registers all 5 tools
 from report.generator import ReportGenerator
 from tools.devops_agent import DevOpsAgent
+from tools.lark_bot import LarkBot
 
 logger = get_logger(__name__)
 AUDIT = Audit()
@@ -46,6 +47,7 @@ _ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "")
 
 _doa = DevOpsAgent()
 _report = ReportGenerator()
+_lark = LarkBot()
 _ses = boto3.client("ses", region_name=_REGION)
 
 
@@ -364,11 +366,64 @@ def _handle_doa_event(event: dict) -> dict:
     # 2) Send SES email
     email_status = _send_email(finding, html_url, trace_id)
 
+    # 3) Push to Lark (飞书) if configured
+    lark_status = _send_lark(finding, html_url, trace_id)
+
     AUDIT.log(trace_id, "EventBridge", detail_type, "ok",
-              {"task_id": task_id, "html_url": html_url, "email": email_status})
+              {"task_id": task_id, "html_url": html_url,
+               "email": email_status, "lark": lark_status})
 
     return {"status": "ok", "html_url": html_url, "email": email_status,
-            "trace_id": trace_id}
+            "lark": lark_status, "trace_id": trace_id}
+
+
+def _send_lark(finding: dict, html_url: str, trace_id: str) -> dict:
+    """Push alarm closure summary to Lark group via webhook."""
+    if not _lark.configured:
+        return {"skipped": True, "reason": "LARK_WEBHOOK_URL not set"}
+
+    severity = finding.get("severity", "info").upper()
+    template_map = {
+        "CRITICAL": "red", "HIGH": "red", "MEDIUM": "orange",
+        "LOW": "yellow", "MINIMAL": "grey", "INFO": "blue",
+    }
+    template = template_map.get(severity, "blue")
+
+    title = f"🚨 [{severity}] {finding.get('title', 'NLOps Alert')}"[:200]
+
+    # Body markdown
+    root_cause = finding.get("root_cause", "")[:600]
+    if not root_cause and finding.get("report_md"):
+        root_cause = finding.get("report_md", "").split("\n\n")[0][:600]
+    if not root_cause:
+        root_cause = "调查已完成,详情请查看诊断书。"
+
+    body_md_parts = [f"**🔬 根因摘要**\n{root_cause}"]
+    if finding.get("tool_uses"):
+        tools_str = " · ".join(f"`{t}`" for t in finding["tool_uses"][:5])
+        body_md_parts.append(f"\n**🛠️ DOA 调用的工具**\n{tools_str}")
+    body_md = "\n\n".join(body_md_parts)
+
+    # Metadata fields
+    metadata = []
+    if finding.get("investigation_id"):
+        metadata.append(("Investigation", finding["investigation_id"][:24] + "..."))
+    if finding.get("service"):
+        metadata.append(("Service", finding["service"]))
+    metadata.append(("时间", datetime.now(timezone.utc).strftime("%H:%M UTC")))
+
+    # URL buttons
+    buttons = []
+    if html_url:
+        buttons.append(("📊 查看完整诊断书", html_url))
+    if finding.get("operator_portal_url"):
+        buttons.append(("🔍 DOA Operator", finding["operator_portal_url"]))
+
+    return _lark.send_card(
+        title=title, body_md=body_md, template=template,
+        url_buttons=buttons or None,
+        metadata=metadata or None,
+    )
 
 
 def _send_email(finding: dict, html_url: str, trace_id: str) -> dict:
