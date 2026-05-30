@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>NLOps v4 · 自然语言驱动的 AI 运维平台</title>
+<style>
+  :root {
+    --aws-orange: #ff9900;
+    --aws-dark: #232f3e;
+    --aws-blue: #146eb4;
+    --bg: #fafbfc;
+    --card-bg: #ffffff;
+    --text: #232f3e;
+    --text-light: #6b7280;
+    --border: #e5e7eb;
+    --green: #16a34a;
+    --red: #dc2626;
+    --yellow: #ca8a04;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+                 "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); margin: 0; line-height: 1.6;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px; }
+  /* Hero */
+  .hero {
+    background: linear-gradient(135deg, var(--aws-dark) 0%, #1a2330 100%);
+    color: white; padding: 60px 40px; border-radius: 16px;
+    text-align: center; margin-bottom: 32px;
+  }
+  .hero h1 { font-size: 2.4em; margin: 0 0 12px 0; }
+  .hero .subtitle { font-size: 1.2em; opacity: 0.85; margin: 0 0 24px; }
+  .hero .badges { display: inline-flex; gap: 8px; flex-wrap: wrap;
+                  justify-content: center; margin-top: 16px; }
+  .badge {
+    background: rgba(255,153,0,0.15); border: 1px solid var(--aws-orange);
+    color: var(--aws-orange); padding: 4px 12px; border-radius: 16px;
+    font-size: 0.85em; font-weight: 500;
+  }
+  .author {
+    margin-top: 32px; opacity: 0.7; font-size: 0.95em;
+  }
+  /* Section */
+  .section {
+    background: var(--card-bg); border-radius: 12px;
+    padding: 32px 36px; margin-bottom: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .section h2 {
+    margin: 0 0 20px; font-size: 1.6em; color: var(--aws-dark);
+    border-bottom: 3px solid var(--aws-orange);
+    padding-bottom: 8px; display: inline-block;
+  }
+  .section h3 {
+    color: var(--aws-dark); margin-top: 28px; font-size: 1.2em;
+  }
+  /* Pain points grid */
+  .pain-grid, .req-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px; margin-top: 16px;
+  }
+  .pain-card {
+    background: #fef3f2; border-left: 4px solid var(--red);
+    padding: 16px; border-radius: 8px;
+  }
+  .pain-card h4 { margin: 0 0 8px; color: var(--red); }
+  .pain-card p { margin: 0; font-size: 0.95em; color: #555; }
+  .req-card {
+    background: #ecfdf5; border-left: 4px solid var(--green);
+    padding: 16px; border-radius: 8px;
+  }
+  .req-card h4 { margin: 0 0 8px; color: var(--green); }
+  .req-card p { margin: 0; font-size: 0.95em; color: #555; }
+  /* Compare table */
+  table.cmp {
+    width: 100%; border-collapse: collapse; margin-top: 16px;
+    font-size: 0.95em;
+  }
+  table.cmp th, table.cmp td {
+    text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border);
+  }
+  table.cmp th { background: var(--aws-dark); color: white; font-weight: 500; }
+  table.cmp tr:nth-child(even) td { background: #f9fafb; }
+  table.cmp .ours { background: #fff7ed !important; font-weight: 500; }
+  /* Architecture diagram (ASCII) */
+  .arch-diagram {
+    background: #1e293b; color: #cbd5e1;
+    padding: 20px; border-radius: 8px;
+    font-family: "Courier New", Consolas, monospace;
+    font-size: 0.82em; overflow-x: auto; line-height: 1.5;
+  }
+  .arch-diagram .highlight { color: var(--aws-orange); font-weight: bold; }
+  /* Capabilities cards */
+  .cap-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px; margin-top: 20px;
+  }
+  .cap-card {
+    background: white; border: 1px solid var(--border);
+    border-top: 4px solid var(--aws-orange);
+    padding: 20px; border-radius: 8px;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .cap-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  }
+  .cap-card h4 { margin: 0 0 8px; font-size: 1.05em; }
+  .cap-card .desc { color: var(--text-light); font-size: 0.9em; margin-bottom: 10px; }
+  .cap-card .stack {
+    margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px;
+  }
+  .tech-tag {
+    background: #e0f2fe; color: #0369a1;
+    padding: 2px 8px; border-radius: 10px;
+    font-size: 0.75em; font-family: monospace;
+  }
+  /* Status */
+  .status-done { color: var(--green); font-weight: 600; }
+  .status-todo { color: var(--yellow); font-weight: 600; }
+  /* Phase cards (Roadmap) */
+  .phase-list { list-style: none; padding: 0; }
+  .phase-list li {
+    padding: 14px 18px; margin: 8px 0;
+    background: #f9fafb; border-left: 4px solid var(--aws-blue);
+    border-radius: 6px;
+  }
+  .phase-list li.done { border-color: var(--green); background: #ecfdf5; }
+  .phase-list li strong { color: var(--aws-dark); }
+  /* Cost table */
+  table.cost {
+    width: 100%; border-collapse: collapse; margin-top: 16px;
+  }
+  table.cost th, table.cost td {
+    text-align: left; padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.cost th { background: var(--aws-dark); color: white; }
+  table.cost tr.total td { font-weight: 600; background: #fff7ed; }
+  table.cost tr.net td { font-weight: 700; background: #fef3c7; color: var(--red); }
+  /* Code block */
+  pre.code {
+    background: #1e293b; color: #cbd5e1;
+    padding: 14px 18px; border-radius: 6px;
+    font-family: "Courier New", monospace; font-size: 0.85em;
+    overflow-x: auto;
+  }
+  pre.code .keyword { color: #f472b6; }
+  pre.code .string { color: #86efac; }
+  /* Footer */
+  .footer {
+    text-align: center; padding: 32px 0;
+    color: var(--text-light); font-size: 0.9em;
+  }
+  .footer a { color: var(--aws-blue); text-decoration: none; margin: 0 8px; }
+  /* Demo flow */
+  .flow-step {
+    display: flex; align-items: flex-start; gap: 16px; margin: 12px 0;
+    padding: 12px; background: #f9fafb; border-radius: 6px;
+  }
+  .flow-num {
+    background: var(--aws-orange); color: white;
+    width: 28px; height: 28px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: bold; flex-shrink: 0;
+  }
+  .flow-content { flex: 1; font-size: 0.95em; }
+  .flow-content code {
+    background: #fef3c7; padding: 2px 6px; border-radius: 3px;
+    font-size: 0.9em;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- Hero -->
+<div class="hero">
+  <h1>NLOps v4</h1>
+  <div class="subtitle">基于 AWS DevOps Agent 的自然语言驱动 AI 运维平台</div>
+  <div class="badges">
+    <span class="badge">v4.0 · 2026-05</span>
+    <span class="badge">DOA 原生</span>
+    <span class="badge">飞书集成</span>
+    <span class="badge">智能闭环</span>
+    <span class="badge">中国化体验</span>
+  </div>
+  <div class="author">
+    西云数据 · 解决方案架构师 陈朋辉<br/>
+    演示日期 · 2026-06-02
+  </div>
+</div>
+
+<!-- Customer Problem -->
+<div class="section">
+  <h2>1️⃣ 客户问题</h2>
+  <p>某客户迁移 100+ 微服务到 AWS，大量使用 ECS / ALB / Lambda / RDS / ElastiCache 等托管服务。SRE 团队对 AWS 服务运维经验不足，希望快速完成问题定界定位，并逐步积累 AWS 运维经验。</p>
+
+  <div class="pain-grid">
+    <div class="pain-card">
+      <h4>🔍 信息分散</h4>
+      <p>指标、日志、事件分散在多个 AWS 控制台<br/>切换上下文耗时，关联难度大</p>
+    </div>
+    <div class="pain-card">
+      <h4>🧠 经验难传承</h4>
+      <p>资深工程师离职即失去关键经验<br/>新成员需数月才能独立处理生产问题</p>
+    </div>
+    <div class="pain-card">
+      <h4>⏱️ 定位耗时长</h4>
+      <p>人工排障平均 1-2 小时<br/>夜间告警尤其依赖随时在场的工程师</p>
+    </div>
+    <div class="pain-card">
+      <h4>📱 移动端缺位</h4>
+      <p>AWS 控制台不适合手机操作<br/>值班工程师离开电脑就无法处理</p>
+    </div>
+  </div>
+</div>
+
+<!-- Customer Need -->
+<div class="section">
+  <h2>2️⃣ 客户要什么</h2>
+  <div class="req-grid">
+    <div class="req-card">
+      <h4>💬 自然语言交互</h4>
+      <p>不学新工具，一句话完成排障<br/>中文/英文都行，IM/语音/桌面都行</p>
+    </div>
+    <div class="req-card">
+      <h4>📊 给结论不给数字</h4>
+      <p>不要 Dashboard 数字罗列<br/>要 AI 解读 + 修复建议 + 证据链</p>
+    </div>
+    <div class="req-card">
+      <h4>🌙 夜间无人值守</h4>
+      <p>凌晨告警自动调查<br/>醒来时已经知道根因，而不是被叫醒</p>
+    </div>
+    <div class="req-card">
+      <h4>🧬 经验自动沉淀</h4>
+      <p>处理过的问题下次自动复用<br/>团队经验越积越多，新成员快速上手</p>
+    </div>
+  </div>
+</div>
+
+<!-- Industry Compare -->
+<div class="section">
+  <h2>3️⃣ 业界方案对比</h2>
+  <table class="cmp">
+    <thead>
+      <tr><th>方案类型</th><th>代表产品</th><th>做法</th><th>弊端</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>传统监控</td>
+        <td>CloudWatch / Grafana / Zabbix</td>
+        <td>Dashboard 展示</td>
+        <td>给数字不给结论</td>
+      </tr>
+      <tr>
+        <td>AIOps 平台</td>
+        <td>Datadog Bits AI / Dynatrace Davis</td>
+        <td>AI 根因分析 + 修复建议</td>
+        <td>绑定自有生态，月成本 $44-118/host</td>
+      </tr>
+      <tr>
+        <td>AWS 原生</td>
+        <td>AWS DevOps Agent (2026-03 GA)</td>
+        <td>自主调查 + 跨平台关联 + 详细修复计划</td>
+        <td>可视化输出偏控制台技术视角，缺中国 IM 入口</td>
+      </tr>
+      <tr class="ours">
+        <td><strong>NLOps v4 (我们)</strong></td>
+        <td>AWS DOA + 飞书/Quick + HTML 诊断书 + Skills</td>
+        <td>DOA 引擎 + 中国化体验层 + 自动经验沉淀</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Architecture -->
+<div class="section">
+  <h2>4️⃣ 整体架构 (v4)</h2>
+  <p>基于 AWS DevOps Agent 原生能力，仅自建 1 个 Lambda + 5 个 MCP 工具，~800 行代码。</p>
+
+  <pre class="arch-diagram">
+┌──────────────────────────────────────────────────────────────────┐
+│                      <span class="highlight">交互层 (Entry Points)</span>                       │
+│                                                                  │
+│  📱 飞书 @机器人  🖥️ Quick Desktop  📧 SES 邮件  🚨 CW Alarm    │
+│       ↓                ↓                ↑              ↓         │
+│       └────────────────┼────────────────┘              │         │
+│                        ↓                               ↓         │
+│              <span class="highlight">API Gateway (REST)</span>                  SNS Topic   │
+└──────────────┬─────────────────────────────────────┬─────────────┘
+               ↓                                     ↓
+┌──────────────────────────────────────────────────────────────────┐
+│      <span class="highlight">Orchestrator Lambda</span>  (1024MB · Python 3.12 · 4 路由)        │
+│                                                                  │
+│  /chat  /lark-event  /mcp-quick  /webhook-incoming  EB Handler   │
+│                                                                  │
+│  5 MCP 工具:  query_doa · start_investigation · get_html_report  │
+│              trigger_runbook · notify_im                          │
+└────────┬───────────────────┬───────────────────┬─────────────────┘
+         ↓                   ↓                   ↓
+┌────────────────┐  ┌─────────────────┐  ┌─────────────────────┐
+│ <span class="highlight">DevOps Agent</span>   │  │ Bedrock Nova Pro│  │ S3 / DDB / SSM      │
+│ (核心引擎)      │  │ (AI 增强)       │  │ Runbook            │
+│                │  │                 │  │                     │
+│ • Skills × 3   │  │ • 故障公告      │  │ • HTML 诊断书       │
+│ • CW/Logs/X-Ray│  │ • SRE 摘要      │  │ • 经验自动沉淀      │
+│ • GitHub       │  │ • 自动 Skill    │  │ • Sessions/Audit   │
+└────────────────┘  └─────────────────┘  └─────────────────────┘
+</pre>
+</div>
+
+<!-- Core Capabilities -->
+<div class="section">
+  <h2>5️⃣ 核心能力（已实现）</h2>
+  <div class="cap-grid">
+    <div class="cap-card">
+      <h4>🔍 智能诊断</h4>
+      <div class="desc">用户飞书 @机器人一句话 → DOA 自主跨源关联 (CW + Logs + X-Ray + GitHub) → 5-15 分钟出根因</div>
+      <div class="stack">
+        <span class="tech-tag">Lark Bot</span>
+        <span class="tech-tag">DOA Investigation</span>
+        <span class="tech-tag">异步处理</span>
+      </div>
+    </div>
+    <div class="cap-card">
+      <h4>📊 HTML 诊断书</h4>
+      <div class="desc">不是 Dashboard，是 AI 诊断报告。含 AI 解读、ECharts 趋势图、工具使用、操作建议、证据链</div>
+      <div class="stack">
+        <span class="tech-tag">Jinja2</span>
+        <span class="tech-tag">marked.js</span>
+        <span class="tech-tag">ECharts</span>
+        <span class="tech-tag">S3</span>
+      </div>
+    </div>
+    <div class="cap-card">
+      <h4>🚨 告警自动闭环</h4>
+      <div class="desc">CW Alarm → SNS → Lambda → DOA 自动调查 → 飞书卡片 + 邮件双通道</div>
+      <div class="stack">
+        <span class="tech-tag">CloudWatch</span>
+        <span class="tech-tag">SNS</span>
+        <span class="tech-tag">EventBridge</span>
+        <span class="tech-tag">SES</span>
+        <span class="tech-tag">Lark Webhook</span>
+      </div>
+    </div>
+    <div class="cap-card">
+      <h4>🧬 经验自动沉淀</h4>
+      <div class="desc">每次 Investigation 完成后，Nova Pro 自动提取根因+步骤生成 Skill markdown，下次相似问题秒级匹配</div>
+      <div class="stack">
+        <span class="tech-tag">Nova Pro</span>
+        <span class="tech-tag">DOA Skills</span>
+        <span class="tech-tag">S3</span>
+      </div>
+    </div>
+    <div class="cap-card">
+      <h4>📣 故障公告自动化</h4>
+      <div class="desc">AI 自动生成两版文案：面向用户的中文公告 + 面向 SRE 的内部摘要（含行动项）</div>
+      <div class="stack">
+        <span class="tech-tag">Nova Pro</span>
+        <span class="tech-tag">Bedrock</span>
+      </div>
+    </div>
+    <div class="cap-card">
+      <h4>⚙️ MCP 工具盒</h4>
+      <div class="desc">5 个标准 MCP 工具，任何 MCP-aware AI（Quick/Claude/Nova）都可调用</div>
+      <div class="stack">
+        <span class="tech-tag">JSON-RPC 2.0</span>
+        <span class="tech-tag">API Gateway</span>
+        <span class="tech-tag">stdio bridge</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Demo Flow -->
+<div class="section">
+  <h2>6️⃣ 演示场景</h2>
+  <h3>Demo 1: 飞书智能问诊（主动）</h3>
+  <div class="flow-step">
+    <div class="flow-num">1</div>
+    <div class="flow-content">
+      用户在飞书群 <code>@NLOps demo-api 服务为什么慢？</code>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">2</div>
+    <div class="flow-content">
+      机器人 3-5 秒回复：<code>🔍 已启动深度调查 task_id: xxx-xxx，预计 5-15 分钟完成</code>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">3</div>
+    <div class="flow-content">
+      DOA 自动应用 ECS Skill，跨源关联 CloudWatch + GitHub 部署历史
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">4</div>
+    <div class="flow-content">
+      调查完成 → 飞书群自动收到红色卡片（根因+诊断书按钮）
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">5</div>
+    <div class="flow-content">
+      点击按钮 → 浏览器打开图文并茂的 HTML 诊断书（含趋势图、AI 报告、自动 Skill 提示）
+    </div>
+  </div>
+
+  <h3 style="margin-top: 24px;">Demo 2: 凌晨告警闭环（被动）</h3>
+  <div class="flow-step">
+    <div class="flow-num">1</div>
+    <div class="flow-content">
+      CW Alarm 进入 ALARM 状态（凌晨 2 点 SRE 在睡觉）
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">2</div>
+    <div class="flow-content">
+      SNS → Lambda → DOA 自动启动 Investigation（无人干预）
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">3</div>
+    <div class="flow-content">
+      DOA 完成调查 → EventBridge → Lambda 渲染诊断书
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">4</div>
+    <div class="flow-content">
+      早上 SRE 起床 → 飞书已有完整调查卡片 + 邮箱已有故障公告草稿（直接发布即可）
+    </div>
+  </div>
+</div>
+
+<!-- Cost -->
+<div class="section">
+  <h2>7️⃣ 成本估算（50 用户/月）</h2>
+  <table class="cost">
+    <thead>
+      <tr><th>服务</th><th>规格</th><th>月费用</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>AWS DevOps Agent</td><td>Chat + Investigation (~30h)</td><td>$900</td></tr>
+      <tr><td>Bedrock Nova Pro</td><td>Chat router + 报告增强</td><td>$60</td></tr>
+      <tr><td>Lambda × 1</td><td>1024MB · ~50K invocations</td><td>$5</td></tr>
+      <tr><td>DynamoDB × 2</td><td>Sessions + Audit (PAY_PER_REQUEST)</td><td>$5</td></tr>
+      <tr><td>API Gateway</td><td>REST API · ~50K calls</td><td>$3</td></tr>
+      <tr><td>S3 (诊断书)</td><td>HTML + 自动 Skill</td><td>$2</td></tr>
+      <tr><td>SNS + SES</td><td>告警路由 + 邮件</td><td>$2</td></tr>
+      <tr><td>SSM Runbook</td><td>Automation 执行</td><td>$0</td></tr>
+      <tr class="total"><td>合计</td><td></td><td>~$977/月</td></tr>
+      <tr><td>Enterprise Support 抵扣</td><td>DOA 75% 抵扣</td><td>-$525</td></tr>
+      <tr class="net"><td>净成本</td><td>50 用户场景</td><td>~$452/月 (~$9/用户)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Roadmap -->
+<div class="section">
+  <h2>8️⃣ 路线图</h2>
+  <ul class="phase-list">
+    <li class="done">
+      <strong>Phase 1 · 核心闭环 ✅</strong><br/>
+      DOA Agent Space + 5 MCP 工具 + 3 Skills + 告警 Webhook + HTML 诊断书 + 邮件
+    </li>
+    <li class="done">
+      <strong>Phase 2 · 体验层 ✅</strong><br/>
+      飞书 @机器人双向对话 · 飞书群消息卡片 · ECharts 趋势图
+    </li>
+    <li class="done">
+      <strong>Phase 2.5 · AI 增强 ✅</strong><br/>
+      故障公告自动生成 · SRE 内部摘要 · 经验自动沉淀（生成新 Skill）
+    </li>
+    <li>
+      <strong>Phase 3 · 自动修复 (Q3)</strong><br/>
+      SSM Runbook 扩充 · Kiro 集成（Agent-ready Spec → 自动 PR） · 多模态架构图分析
+    </li>
+    <li>
+      <strong>Phase 4 · 智能进阶 (Q4)</strong><br/>
+      Nova Sonic 双向语音 · 拓扑图自动生成 · 故障预测
+    </li>
+    <li>
+      <strong>Phase 5 · 中国区 (2027)</strong><br/>
+      CloudWatch Investigations 降级路径 · Bedrock KB 替代 Skills · 中国客户落地
+    </li>
+  </ul>
+</div>
+
+<!-- Differentiation -->
+<div class="section">
+  <h2>9️⃣ 核心差异化 (vs DevOps Agent 原生)</h2>
+  <table class="cmp">
+    <thead>
+      <tr><th>维度</th><th>DOA 原生</th><th>NLOps v4 增量</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>入口</td>
+        <td>Operator Console / Slack</td>
+        <td>+ <strong>飞书 @机器人</strong> / Quick Desktop / 邮件</td>
+      </tr>
+      <tr>
+        <td>输出</td>
+        <td>文本 + Slack 消息</td>
+        <td>+ <strong>HTML 诊断书</strong>（图表 + AI 解读 + 证据链）</td>
+      </tr>
+      <tr>
+        <td>经验</td>
+        <td>Skills（手动创建）</td>
+        <td>+ <strong>自动从 Investigation 生成 Skill</strong></td>
+      </tr>
+      <tr>
+        <td>故障通报</td>
+        <td>❌</td>
+        <td>+ <strong>自动生成中文公告 + SRE 摘要</strong></td>
+      </tr>
+      <tr>
+        <td>修复</td>
+        <td>Mitigation Plan（建议）</td>
+        <td>+ SSM 自动执行（Kiro 代码修复 Roadmap）</td>
+      </tr>
+      <tr>
+        <td>中国 IM</td>
+        <td>❌ 仅 Slack</td>
+        <td>+ <strong>飞书原生集成</strong></td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="margin-top: 20px; font-size: 1.1em; padding: 16px;
+            background: #fff7ed; border-left: 4px solid var(--aws-orange); border-radius: 6px;">
+    <strong>一句话定位</strong>：NLOps v4 = DevOps Agent 的中国化体验层 + 可视化诊断书 + 自动经验沉淀 + 故障公告自动化
+  </p>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  <p>
+    <a href="https://github.com/penghui1234/nlops" target="_blank">GitHub Repo</a> ·
+    <a href="https://github.com/penghui1234/nlops/blob/feat/v4-doa-native/docs/design-v4.md" target="_blank">设计文档</a> ·
+    <a href="https://aws.amazon.com/devops-agent/" target="_blank">AWS DevOps Agent</a>
+  </p>
+  <p>© 2026 西云数据 · 解决方案架构师 陈朋辉 · 内部演示资料</p>
+</div>
+
+</div>
+</body>
+</html>
