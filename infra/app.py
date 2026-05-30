@@ -1,20 +1,9 @@
-"""CDK app entrypoint for NLOps platform."""
-import os
+"""CDK app entry — v4."""
+from aws_cdk import App, Environment
+from nlops_v4_stack import NLOpsV4Stack
 
-import aws_cdk as cdk
-
-from nlops_stack import NLOpsStack
-
-app = cdk.App()
-
-NLOpsStack(
-    app,
-    "NLOpsStack",
-    env=cdk.Environment(
-        account=os.getenv("CDK_DEFAULT_ACCOUNT"),
-        region=os.getenv("CDK_DEFAULT_REGION", "us-east-1"),
-    ),
-    description="Natural Language driven AI Ops platform (NLOps)",
-)
-
+app = App()
+NLOpsV4Stack(app, "NLOpsV4Stack",
+             env=Environment(account="828414850215", region="us-east-1"),
+             description="NLOps v4 - DevOps Agent native architecture")
 app.synth()

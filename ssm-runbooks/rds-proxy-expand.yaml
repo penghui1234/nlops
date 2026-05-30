@@ -1,0 +1,50 @@
+schemaVersion: "0.3"
+description: "NLOps - Modify RDS Proxy max connections percent"
+assumeRole: "{{ AutomationAssumeRole }}"
+parameters:
+  ProxyName:
+    type: String
+    description: "RDS Proxy name"
+  TargetGroupName:
+    type: String
+    description: "RDS Proxy target group name"
+    default: "default"
+  MaxConnectionsPercent:
+    type: Integer
+    description: "Max connections as percent of DB max_connections (1-100)"
+    default: 100
+    allowedPattern: "^([1-9]|[1-9][0-9]|100)$"
+  AutomationAssumeRole:
+    type: String
+    description: "IAM role for automation"
+    default: ""
+mainSteps:
+  - name: GetProxyTargetGroup
+    action: aws:executeAwsApi
+    inputs:
+      Service: rds
+      Api: DescribeDBProxyTargetGroups
+      DBProxyName: "{{ ProxyName }}"
+    outputs:
+      - Name: TargetGroupArn
+        Selector: "$.TargetGroups[0].TargetGroupArn"
+        Type: String
+      - Name: CurrentMaxPct
+        Selector: "$.TargetGroups[0].ConnectionPoolConfig.MaxConnectionsPercent"
+        Type: Integer
+  - name: UpdateConnectionPool
+    action: aws:executeAwsApi
+    inputs:
+      Service: rds
+      Api: ModifyDBProxyTargetGroup
+      DBProxyName: "{{ ProxyName }}"
+      TargetGroupName: "{{ TargetGroupName }}"
+      ConnectionPoolConfig:
+        MaxConnectionsPercent: "{{ MaxConnectionsPercent }}"
+    outputs:
+      - Name: NewMaxPct
+        Selector: "$.DBProxyTargetGroup.ConnectionPoolConfig.MaxConnectionsPercent"
+        Type: Integer
+outputs:
+  - GetProxyTargetGroup.CurrentMaxPct
+  - UpdateConnectionPool.NewMaxPct

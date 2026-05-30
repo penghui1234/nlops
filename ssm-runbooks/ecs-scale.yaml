@@ -1,0 +1,54 @@
+schemaVersion: "0.3"
+description: "NLOps - Scale ECS service desired count"
+assumeRole: "{{ AutomationAssumeRole }}"
+parameters:
+  ClusterName:
+    type: String
+    description: "ECS cluster name"
+  ServiceName:
+    type: String
+    description: "ECS service name"
+  DesiredCount:
+    type: Integer
+    description: "Target desired task count"
+    default: 2
+  AutomationAssumeRole:
+    type: String
+    description: "IAM role for automation"
+    default: ""
+mainSteps:
+  - name: ScaleService
+    action: aws:executeAwsApi
+    inputs:
+      Service: ecs
+      Api: UpdateService
+      cluster: "{{ ClusterName }}"
+      service: "{{ ServiceName }}"
+      desiredCount: "{{ DesiredCount }}"
+    outputs:
+      - Name: ServiceArn
+        Selector: $.service.serviceArn
+        Type: String
+      - Name: DesiredCount
+        Selector: $.service.desiredCount
+        Type: Integer
+  - name: VerifyScale
+    action: aws:executeAwsApi
+    inputs:
+      Service: ecs
+      Api: DescribeServices
+      cluster: "{{ ClusterName }}"
+      services:
+        - "{{ ServiceName }}"
+    outputs:
+      - Name: RunningCount
+        Selector: $.services[0].runningCount
+        Type: Integer
+      - Name: Status
+        Selector: $.services[0].status
+        Type: String
+outputs:
+  - ScaleService.ServiceArn
+  - ScaleService.DesiredCount
+  - VerifyScale.RunningCount
+  - VerifyScale.Status
