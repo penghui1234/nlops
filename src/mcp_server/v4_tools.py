@@ -112,7 +112,7 @@ def start_investigation(title: str, description: str = "",
         "expected_minutes": "5-15",
         "engine": "aws-devops-agent",
         "operator_console_url": (
-            f"https://{os.getenv('DOA_AGENT_SPACE_ID', '')}.aidevops.global.app.aws/investigations/{task_id}"
+            f"https://{os.getenv('DOA_AGENT_SPACE_ID', '')}.aidevops.global.app.aws/investigation/{task_id}"
         ),
     }
 
@@ -155,7 +155,7 @@ def get_html_report(task_id: str = "", title: str = "",
                 else inv.get("description", "")[:600]
             ),
             "operator_portal_url": (
-                f"https://{os.getenv('DOA_AGENT_SPACE_ID', '')}.aidevops.global.app.aws/investigations/{task_id}"
+                f"https://{os.getenv('DOA_AGENT_SPACE_ID', '')}.aidevops.global.app.aws/investigation/{task_id}"
             ),
             "ts": int(datetime.now(timezone.utc).timestamp()),
         }
