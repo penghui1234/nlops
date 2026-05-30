@@ -358,8 +358,7 @@ def _handle_doa_event(event: dict) -> dict:
                 if isinstance(inv, dict) else "")
         ),
         "operator_portal_url": (
-            f"https://console.aws.amazon.com/devops-agent/spaces/"
-            f"{agent_space}/tasks/{task_id}" if task_id else ""
+            (f"https://{agent_space}.aidevops.global.app.aws/investigations/{task_id}" if task_id and agent_space else "")
         ),
         "timeline": inv.get("timeline", []) if isinstance(inv, dict) else [],
         "ts": int(time.time()),
