@@ -56,6 +56,11 @@ _ses = boto3.client("ses", region_name=_REGION)
 # ============================================================ #
 def handler(event: dict, context) -> dict:
     """Single entry. Routes by event shape."""
+    # 0. Self-invoke for async Lark processing
+    if event.get("_async_lark") is True:
+        from handlers.lark_handler import handler as lark_h
+        return lark_h(event, context)
+
     # 1. EventBridge event from DOA
     src = event.get("source", "")
     if src in ("aws.devopsagent", "aws.aidevops"):  # GA + preview names
