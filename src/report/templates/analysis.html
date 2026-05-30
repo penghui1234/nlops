@@ -97,6 +97,43 @@
   </div>
   {% endif %}
 
+  {% if finding.customer_announcement %}
+  <div class="card" style="border-left: 4px solid #2196f3;">
+    <h2>📣 故障公告（面向用户）</h2>
+    <p style="background: #e3f2fd; padding: 14px 18px; border-radius: 6px;
+              line-height: 1.7; white-space: pre-wrap;">{{ finding.customer_announcement }}</p>
+    <small style="color: #888;">由 Nova Pro 自动生成,可直接发布到状态页/微博/邮件群发</small>
+  </div>
+  {% endif %}
+
+  {% if finding.internal_summary %}
+  <div class="card" style="border-left: 4px solid #ff9900;">
+    <h2>📝 SRE 内部摘要</h2>
+    <div id="internal-summary" class="ai-report"></div>
+  </div>
+  {% endif %}
+
+  {% if finding.auto_skill %}
+  <div class="card" style="border-left: 4px solid #4caf50;">
+    <h2>🧬 经验已自动沉淀为 Skill</h2>
+    <p>本次调查的根因和处理流程已自动提取为可复用 Skill,下次相似问题 DOA 将自动应用此经验。</p>
+    <p>
+      <strong>Skill 名称:</strong> <code>{{ finding.auto_skill.name }}</code><br/>
+      <strong>说明:</strong> {{ finding.auto_skill.description }}<br/>
+      {% if finding.auto_skill.url %}
+      <strong>下载:</strong> <a href="{{ finding.auto_skill.url }}" target="_blank">查看 Markdown</a>
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+
+  {% if finding.metrics_chart %}
+  <div class="card">
+    <h2>📊 关键指标趋势</h2>
+    <div id="metrics-chart" style="width: 100%; height: 320px;"></div>
+  </div>
+  {% endif %}
+
   {% if finding.report_md %}
   <div class="card">
     <h2>🤖 DevOps Agent 完整调查报告</h2>
@@ -109,13 +146,6 @@
       {% endfor %}
     </div>
     {% endif %}
-  </div>
-  {% endif %}
-
-  {% if finding.metrics_chart %}
-  <div class="card">
-    <h2>📊 关键指标</h2>
-    <div id="metrics-chart" class="chart"></div>
   </div>
   {% endif %}
 
@@ -189,6 +219,13 @@
     } else {
       reportEl.innerHTML = '<em>暂无完整调查内容</em>';
     }
+  }
+
+  // Render internal summary if present
+  var sumEl = document.getElementById('internal-summary');
+  if (sumEl && typeof marked !== 'undefined') {
+    var sumMd = {{ finding.internal_summary | tojson if finding.internal_summary else '""' }};
+    if (sumMd) sumEl.innerHTML = marked.parse(sumMd);
   }
 })();
 </script>

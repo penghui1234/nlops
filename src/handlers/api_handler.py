@@ -365,6 +365,38 @@ def _handle_doa_event(event: dict) -> dict:
         "ts": int(time.time()),
     }
 
+    # AI 增强: 生成故障公告 + 内部摘要 + 经验沉淀 + 指标趋势图
+    if report_md:
+        try:
+            from tools import ai_enhance
+            finding["customer_announcement"] = ai_enhance.generate_customer_announcement(
+                report_md, title=finding["title"], severity=severity,
+            )
+            finding["internal_summary"] = ai_enhance.generate_internal_summary(
+                report_md, title=finding["title"],
+            )
+            # Sink as Skill for future matching
+            skill = ai_enhance.generate_skill_markdown(
+                report_md, title=finding["title"], investigation_id=task_id,
+            )
+            if skill:
+                bucket = os.getenv("REPORT_BUCKET", "")
+                skill_url = ai_enhance.sink_skill_to_s3(bucket, skill)
+                finding["auto_skill"] = {
+                    "name": skill["skill_name"],
+                    "description": skill["description"],
+                    "url": skill_url,
+                }
+            # Build metrics chart from CloudWatch
+            finding["metrics_chart"] = ai_enhance.build_metrics_chart(
+                service=detail.get("service") or "demo-api",
+                instance_id="i-0257069e2402a0fbc",
+                minutes=60,
+            )
+            logger.info("eb.ai_enhanced", extra={"trace_id": trace_id})
+        except Exception as exc:
+            logger.exception("eb.ai_enhance_failed")
+
     # 1) Render HTML
     html_url = ""
     try:
