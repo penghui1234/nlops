@@ -170,6 +170,68 @@ DOA Mitigation Plan
     ▼ 部署完成 → DOA 验证 → 关闭 Investigation
 ```
 
+#### Agent-ready Spec 示例
+
+```yaml
+spec_version: "1.0"
+incident_id: "inv-xyz-001"
+title: "RDS Proxy 连接池容量不足"
+
+context:
+  root_cause: "max_connections=200 不足以支撑当前流量"
+  evidence:
+    - "ConnectionPool 使用率峰值 95%"
+    - "P99 延迟 200ms→320ms 与 Lambda 并发增长正相关"
+  service: "demo-api"
+
+target:
+  repository: "github.com/penghui1234/demo-api-iac"
+  files:
+    - path: "lib/rds-stack.ts"
+      reason: "RDS Proxy 连接池配置"
+
+changes:
+  - file: "lib/rds-stack.ts"
+    operation: "modify"
+    instruction: |
+      在 RdsProxy 构造中,将 maxConnectionsPercent 从 100 提升到 150
+    expected_diff: |
+      - maxConnectionsPercent: 100,
+      + maxConnectionsPercent: 150,
+
+validation:
+  pre_apply:
+    - "运行 cdk diff 确认变更范围"
+    - "检查 RDS 实例 max_connections 参数 ≥ 800"
+  post_apply:
+    - "等待部署完成 (~10min)"
+    - "验证 ConnectionPool 使用率 < 70%"
+    - "验证 P99 延迟 < 250ms"
+  rollback:
+    - "如指标恶化,git revert 该 commit"
+```
+
+#### 与 v3 的对比（修症状 vs 修病因）
+
+| 维度 | v3 L2 Lambda 直接改 | v4 Agent-ready Spec → Kiro |
+|------|-------------------|--------------------------|
+| 修复内容 | AWS API（重启/扩容/改参数） | **代码 + IaC + 配置** 全栈 |
+| 可审计 | DDB Audit | **Git history + PR review** 双重 |
+| 可回滚 | 需要反向 API | **git revert** 一键 |
+| 与 CI/CD 集成 | ❌ | ✅ 走 GitHub Actions |
+| 高风险变更控制 | Confirm Token | **PR Review + CI 测试** 双层 |
+
+#### Kiro 集成方式
+
+NLOps Orchestrator Lambda 收到 Investigation Completed 事件后：
+1. 解析 Mitigation Plan，提取 Agent-ready Spec
+2. 推送到 IM/Quick Desktop（含 Spec 摘要 + 风险等级）
+3. 用户点"批准" → Lambda 调 Kiro CLI/API
+4. Kiro 自主完成：clone repo → 改代码 → 跑测试 → 提 PR
+5. PR 描述里贴上 Agent-ready Spec 原文，便于 reviewer 理解
+6. CI 通过 → reviewer 合并 → 自动部署
+7. DOA 通过 `validation.post_apply` 验证修复效果
+
 ---
 
 ## 3.4 Quick Desktop 接入路径（核心入口之一）
@@ -273,6 +335,133 @@ const MCP_API_URL = process.env.NLOPS_MCP_URL  // 从环境变量读，不再硬
 - ✅ URL 改为环境变量（v3 是硬编码）
 - ✅ 添加 30s 超时
 - ✅ 错误信息透传到 Quick LLM
+
+---
+
+## 3.5 多源关联分析（Cross-source Correlation）
+
+DOA 在调查过程中**自动跨数据源关联**，这是 v3 自建 Strands Agent 难以达到的：
+
+```
+告警发生时 DOA 自动关联：
+
+CloudWatch Metrics ─┐
+CloudWatch Logs    ─┤
+X-Ray Traces       ─┼──▶ DOA Investigation Engine ──▶ 时间线 + 因果链
+AWS Config         ─┤    (跨源时间对齐 + 异常检测)
+GitHub Deployments ─┤
+Splunk (可选)      ─┘
+
+输出示例：
+  "14:32 部署 commit abc123 引入未测试 SQL,
+   导致 RDS CPU 30%→95%, P99 延迟 200ms→1200ms"
+```
+
+**关键差异**：DOA 原生支持时间对齐与因果推断，无需我们写编排代码；v3 是手动塞数据给 Strands，关联效果差。
+
+---
+
+## 3.6 多模态分析（Architecture Diagram Understanding）
+
+参考 [AI-Powered Incident Response with Nova Pro](https://aws.amazon.com/blogs/mt/using-amazon-bedrock-and-amazon-nova-for-ai-powered-incident-response/) 博客：
+
+```
+HTML 诊断书生成时:
+  1. 客户预上传服务架构图 (.png/.drawio) 到 S3
+  2. Investigation 完成后,Nova Pro Vision 处理:
+     ├── 识别架构图组件 (Lambda/RDS/ALB/SQS...)
+     ├── 把 DOA 根因映射到架构图节点
+     └── 在故障组件上自动标红 + 加箭头
+  3. 输出图文并茂的诊断书:
+     ┌────────────────────────────────────┐
+     │ [架构图,RDS 节点标红 + ⚠️ 图标]    │
+     │ "瓶颈在 RDS 实例 demo-db,        │
+     │  ALB → ECS → RDS 链路上 RDS       │
+     │  CPU 已达 95%"                    │
+     └────────────────────────────────────┘
+```
+
+**为什么是关键差异化**：DOA 原生输出是文本，看不懂"哪一块出问题"；架构图标注是非技术人员（产品/老板）也能秒懂的。
+
+---
+
+## 3.7 故障通报自动化（Customer Communication）
+
+事故处理中最耗时的环节之一 —— 写给客户的故障公告，由 Nova Pro 自动生成：
+
+```
+Investigation Completed
+        │
+        ▼ Nova Pro Prompt:
+        "基于以下故障信息生成简体中文故障公告,
+         面向最终用户,不透露内部技术细节,
+         语气专业、致歉、给出预计恢复时间。"
+        │
+        ▼ 自动输出:
+        ┌─────────────────────────────────────┐
+        │ 服务公告 - 2026/05/30 14:30        │
+        │ 我们注意到 demo-api 在 14:32 出现   │
+        │ 访问缓慢。技术团队已定位问题,       │
+        │ 预计 15:00 前完全恢复。             │
+        │ 给您带来的不便,我们深表歉意。       │
+        └─────────────────────────────────────┘
+        │
+        ▼ 推送渠道:
+        ├── 客户状态页 (Status Page)
+        ├── 企微 / 飞书群
+        └── SES 邮件群发
+```
+
+**省时效果**：传统需要值班工程师写 + Manager review (15-30min)，自动化后 30 秒出稿，工程师只需审阅。
+
+---
+
+## 3.8 混合云 / 多云覆盖（Hybrid + Multi-cloud）
+
+DOA 不止支持 AWS，NLOps 不需要额外开发即可继承这个能力：
+
+```
+Agent Space 可同时集成:
+├── AWS                (CloudWatch / X-Ray / Config)  ← 原生
+├── Azure Monitor       (via MCP Server)
+├── GCP Cloud Logging   (via MCP Server)
+├── Splunk on-prem      (via VPC peering, 参考 SRE 博客)
+├── Datadog             (via integration)
+├── Dynatrace           (via integration)
+└── New Relic           (via integration)
+```
+
+**对客户的价值**：
+- 一个 Agent Space 覆盖跨平台
+- 中国客户通过 NLOps 的 IM 入口管理海外资产
+- 避免在每个云平台重复部署 AIOps 工具
+
+---
+
+## 3.9 中国区降级路径（CloudWatch Investigations 备选）
+
+DOA 当前不支持中国区，但 **CloudWatch Investigations** 在中国区可用。NLOps v4 设计支持运行时自动降级：
+
+```
+NLOps Orchestrator 启动:
+├── 检测当前 region
+├── if region in 全球区:
+│       → 使用 DevOps Agent (主路径,完整能力)
+└── elif region in [cn-north-1, cn-northwest-1]:
+        → 降级到 CloudWatch Investigations
+        → 功能子集:
+            ✅ 告警自动调查
+            ✅ 根因分析  
+            ✅ SSM Runbook 修复
+            ✅ HTML 诊断书 (NLOps 自建,与 region 无关)
+            ✅ 企微 / 飞书 IM 通知
+            ❌ Skills (用 Bedrock KB 替代)
+            ❌ GitHub 集成 (需 PrivateLink)
+            ❌ Multi-cloud (限于 AWS 中国)
+```
+
+**对客户的承诺**：
+> "全球版用 DOA，中国版用 CW Investigations，**体验层（IM/Quick/HTML 诊断书）保持一致**"
 
 ---
 
@@ -524,14 +713,18 @@ DevOps Agent 是引擎，NLOps 是驾驶舱：
 | 维度 | DevOps Agent 原生 | NLOps v4 增量 |
 |------|-------------------|---------------|
 | 入口 | Operator Console / Slack | + Quick Desktop / 企微/飞书 / Nova Sonic 语音 |
-| 输出 | 文本 + Slack 消息 | + HTML 诊断书（图表+解读+证据链） |
-| 经验 | Skills（手动创建） | + 自动从 Investigation 生成 Skill |
-| 修复 | Mitigation Plan（建议） | + SSM 自动执行 + Kiro 代码修复 |
-| 语音 | ❌ | Nova Sonic 随时随地运维 |
-| 中国客户 | ❌ 不支持中国 IM | 企微/飞书原生集成 |
+| 输出 | 文本 + Slack 消息 | + **HTML 诊断书**（图表 + 解读 + 证据链 + 架构图标注） |
+| 经验 | Skills（手动创建） | + **自动从 Investigation 生成 Skill** |
+| 修复 | Mitigation Plan（建议） | + SSM 自动执行 + **Kiro 代码级修复（PR）** |
+| 语音 | ❌ | **Nova Sonic 随时随地运维** |
+| 多模态 | 文本输出 | + **架构图理解 + 故障点标注** (Nova Pro Vision) |
+| 客户沟通 | ❌ | **自动生成故障公告**（Nova Pro 中文化） |
+| 中国区支持 | ❌ DOA 不可用 | **CloudWatch Investigations 降级路径** |
+| 中国 IM | ❌ 仅 Slack | 企微/飞书原生集成 |
+| 多云 | ✅ DOA 支持 | NLOps 把多云能力暴露到 IM 入口 |
 
 **一句话定位**：
-> NLOps = DevOps Agent 的**中国化体验层** + **可视化诊断书** + **自动经验沉淀** + **语音运维**
+> NLOps = DevOps Agent 的**中国化体验层** + **多模态可视化诊断书** + **代码级闭环修复** + **自动经验沉淀** + **语音运维** + **中国区降级保障**
 
 ---
 
