@@ -74,11 +74,18 @@ class ReportGenerator:
             autoescape=select_autoescape(["html"]),
         )
         tmpl = env.get_template("analysis.html")
+        # Format ts as human-readable (UTC+8 China time)
+        from datetime import datetime, timezone, timedelta
+        cn_tz = timezone(timedelta(hours=8))
+        ts_human = datetime.fromtimestamp(ts, tz=cn_tz).strftime(
+            "%Y-%m-%d %H:%M:%S CST"
+        )
         return tmpl.render(
             finding=finding,
             kind=kind,
             report_id=report_id,
             ts=ts,
+            ts_human=ts_human,
             finding_json=json.dumps(finding, ensure_ascii=False, indent=2, default=str),
         )
 

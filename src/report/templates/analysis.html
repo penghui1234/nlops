@@ -221,7 +221,7 @@
       {% if finding.investigation_id %}
         <span>🔍 Investigation: <code>{{ finding.investigation_id[:18] }}...</code></span>
       {% endif %}
-      <span>🕐 生成时间: {{ ts }}</span>
+      <span>🕐 生成时间: {{ ts_human or ts }}</span>
       {% if finding.service %}
         <span>📦 服务: <code>{{ finding.service }}</code></span>
       {% endif %}
