@@ -117,45 +117,88 @@ def _process_question(question: str) -> str:
     """Decide how to handle the user's question and return a reply.
 
     Heuristic intent routing:
+      - greeting / "you can do" / "list tools" → tool list reply
       - "诊断书" / "报告" / "task_id ..." → get_html_report URL
       - "调查" / "深度" / "为什么" / "排查" → start_investigation
-      - everything else → DOA chat
+      - everything else → DOA chat (with safe fallback)
     """
     q_lower = question.lower()
+
+    # Intent: greeting / capability listing
+    greeting_kw = ["你好", "hello", "hi ", "在吗", "在不", "你能", "可以做",
+                   "做什么", "做啥", "怎么用", "help", "命令", "帮助"]
+    if any(kw in q_lower for kw in greeting_kw) and len(question) < 30:
+        return (
+            "👋 你好！我是 NLOps 智能运维助手,基于 AWS DevOps Agent。\n\n"
+            "我可以帮你做这些事:\n\n"
+            "🔍 **启动深度调查**\n"
+            "   说: \"@NLOps 帮我调查 demo-api 为什么慢\"\n\n"
+            "📊 **查看诊断书**\n"
+            "   说: \"@NLOps 看看 task_id xxx-xxx 的诊断书\"\n\n"
+            "💬 **直接问诊**\n"
+            "   说: \"@NLOps demo-api 现在什么情况\"\n\n"
+            "🚨 **告警闭环**\n"
+            "   CW Alarm 触发后自动调查,完成后推送本群\n\n"
+            "试着 @ 我吧!"
+        )
 
     # Intent: extract task_id and return HTML report URL
     m = re.search(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
                   question)
     if m and any(kw in question for kw in ["诊断书", "报告", "html"]):
-        from mcp_server.v4_tools import get_html_report
-        result = get_html_report(task_id=m.group(1))
-        if isinstance(result, dict) and result.get("html_url"):
-            return f"📊 诊断书已生成：\n{result['html_url']}"
-        return f"⚠️ 生成失败: {result}"
+        try:
+            from mcp_server.v4_tools import get_html_report
+            result = get_html_report(task_id=m.group(1))
+            if isinstance(result, dict) and result.get("html_url"):
+                return f"📊 诊断书已生成:\n{result['html_url']}"
+            return f"⚠️ 生成失败: {result}"
+        except Exception as exc:
+            logger.exception("lark.report_failed")
+            return f"⚠️ 生成诊断书时出错: {str(exc)[:200]}"
 
     # Intent: start investigation (deep dive)
-    if any(kw in question for kw in ["调查", "深度", "排查", "为什么", "为啥", "怎么回事", "investigation"]):
-        title = question[:200]
-        task_id = _doa.start_investigation(
-            title=title,
-            description=question[:4000],
-            priority="MEDIUM",
-        )
-        if task_id and not task_id.startswith("err-"):
-            return (
-                f"🔍 已启动深度调查\n"
-                f"任务 ID: {task_id}\n"
-                f"预计 5-15 分钟完成\n\n"
-                f"完成后将自动推送诊断书到本群。\n"
-                f"也可以稍后 @我说 '生成 task_id {task_id} 的诊断书' 立即查看。"
+    if any(kw in question for kw in ["调查", "深度", "排查", "为什么", "为啥",
+                                       "怎么回事", "investigation"]):
+        try:
+            title = question[:200]
+            task_id = _doa.start_investigation(
+                title=title,
+                description=question[:4000],
+                priority="MEDIUM",
             )
-        return f"⚠️ 调查启动失败: {task_id}"
+            if task_id and not task_id.startswith("err-"):
+                return (
+                    f"🔍 已启动深度调查\n\n"
+                    f"任务 ID: `{task_id}`\n"
+                    f"预计 5-15 分钟完成\n\n"
+                    f"完成后将自动推送诊断书到本群。\n"
+                    f"你也可以稍后 @ 我说 \"生成 task_id {task_id} 的诊断书\" 立即查看。"
+                )
+            return f"⚠️ 调查启动失败: {task_id}"
+        except Exception as exc:
+            logger.exception("lark.start_investigation_failed")
+            return f"⚠️ 调查启动失败: {str(exc)[:200]}"
 
-    # Default: DOA chat
-    answer = _doa.chat(question, user_id="lark-bot")
-    if len(answer) > 1500:
-        answer = answer[:1500] + "...\n\n（回复过长已截断）"
-    return f"💬 {answer}"
+    # Default: DOA chat with safe fallback
+    try:
+        answer = _doa.chat(question, user_id="lark-bot")
+        # If DOA returned its mock fallback (empty real answer), redirect to investigation
+        if "[mock" in answer or "mock fallback" in answer.lower():
+            return (
+                "⚠️ DOA Chat 暂时无法直接回答这个问题。\n\n"
+                "建议改用 **深度调查** 模式:\n"
+                f"@NLOps 帮我调查: {question[:80]}"
+            )
+        if len(answer) > 1500:
+            answer = answer[:1500] + "...\n\n（回复过长已截断）"
+        return f"💬 {answer}"
+    except Exception as exc:
+        logger.exception("lark.chat_failed")
+        return (
+            "⚠️ 直接问诊暂时不可用 (DOA Agent Space 当前无关联服务)。\n\n"
+            "建议改用 **深度调查** 模式:\n"
+            f"@NLOps 帮我调查: {question[:80]}"
+        )
 
 
 # ============================================================ #

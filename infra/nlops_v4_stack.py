@@ -99,9 +99,9 @@ class NLOpsV4Stack(Stack):
             "ALERT_EMAIL_TO": "penghuichen@nwcdcloud.cn",
             # Lark (飞书) custom robot incoming webhook
             "LARK_WEBHOOK_URL": "https://open.feishu.cn/open-apis/bot/v2/hook/21826540-97a0-46b7-81c3-677b17c6bc7a",
-            # Lark (飞书) Custom App credentials (set via console after creating the app)
-            "LARK_APP_ID": "",
-            "LARK_APP_SECRET": "",
+            # Lark (飞书) Custom App credentials
+            "LARK_APP_ID": "cli_aa907e509b389bc8",
+            "LARK_APP_SECRET": "WtuhHxF2c4PAOAoyXG92ubewyBLwIow8",
             "LOG_LEVEL": "INFO",
         }
 
