@@ -324,17 +324,28 @@ def _handle_doa_event(event: dict) -> dict:
     # Pull full investigation
     inv = _doa.get_investigation(task_id) if task_id else {}
 
+    # Pull AI findings (the actual investigation report)
+    execution_id = metadata.get("execution_id") or metadata.get("executionId") or ""
+    findings = _doa.get_investigation_findings(execution_id) if execution_id else {}
+    report_md = findings.get("report_md", "")
+    tool_uses = findings.get("tool_uses", [])
+
     finding = {
         "title": ((inv.get("title") if isinstance(inv, dict) else "")
                   or data.get("title") or detail.get("title")
                   or detail_type),
         "investigation_id": task_id,
+        "execution_id": execution_id,
         "severity": severity,
         "service": detail.get("service", ""),
-        "root_cause": ((detail.get("rootCause") or {}).get("summary", "")
-            if isinstance(detail.get("rootCause"), dict)
-            else (inv.get("description", "")[:1500]
-                  if isinstance(inv, dict) else "")),
+        "report_md": report_md,            # full markdown report from DOA AI
+        "tool_uses": tool_uses,            # list of AWS tools DOA used
+        "root_cause": (
+            # Try to extract first heading or first 800 chars of report
+            (report_md.split("\n")[0][:300] if report_md else "")
+            or (inv.get("description", "")[:600]
+                if isinstance(inv, dict) else "")
+        ),
         "operator_portal_url": (
             f"https://console.aws.amazon.com/devops-agent/spaces/"
             f"{agent_space}/tasks/{task_id}" if task_id else ""

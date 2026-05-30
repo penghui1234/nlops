@@ -121,6 +121,59 @@ class DevOpsAgent:
             logger.exception("doa.get_task_failed")
             return {"error": str(exc)[:200]}
 
+    def get_investigation_findings(self, execution_id: str) -> dict[str, Any]:
+        """Fetch the AI's actual analysis output from journal records.
+
+        After an Investigation completes, DOA writes its findings as journal
+        records of role=assistant. We aggregate the text content into a
+        single markdown report for HTML rendering.
+
+        Returns:
+            { "report_md": "<full markdown>", "tool_uses": [...], "raw_records": N }
+        """
+        if not self.agent_space_id or not execution_id:
+            return {}
+        try:
+            resp = self._client.list_journal_records(
+                agentSpaceId=self.agent_space_id,
+                executionId=execution_id,
+            )
+        except (ClientError, BotoCoreError) as exc:
+            logger.exception("doa.list_journal_failed")
+            return {"error": str(exc)[:200]}
+
+        records = resp.get("records", []) or []
+        text_chunks = []
+        tool_uses = []
+        import json as _json
+
+        for rec in records:
+            content_str = rec.get("content", "")
+            try:
+                content = _json.loads(content_str)
+            except Exception:
+                continue
+
+            # assistant text messages -> aggregate report
+            if content.get("role") == "assistant":
+                content_list = content.get("content", [])
+                if isinstance(content_list, list):
+                    for c in content_list:
+                        if isinstance(c, dict) and "text" in c:
+                            text_chunks.append(c["text"])
+
+            # utilization records -> extract tool uses
+            data = content.get("data", {})
+            if isinstance(data, dict):
+                for tool in data.get("tools", []) or []:
+                    tool_uses.append(tool.get("name", ""))
+
+        return {
+            "report_md": "\n\n".join(text_chunks),
+            "tool_uses": list(set(filter(None, tool_uses))),
+            "raw_records": len(records),
+        }
+
     # -------------------------------------------------------------- #
     @staticmethod
     def _mock(prompt: str, reason: str) -> str:

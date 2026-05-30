@@ -137,11 +137,23 @@ def get_html_report(task_id: str = "", title: str = "",
     finding: dict[str, Any] = {}
     if task_id:
         inv = _get_doa().get_investigation(task_id)
+        # Pull AI findings from journal records (the actual report)
+        execution_id = inv.get("executionId", "") if isinstance(inv, dict) else ""
+        ai_findings = _get_doa().get_investigation_findings(execution_id) if execution_id else {}
+        report_md = ai_findings.get("report_md", "")
+        tool_uses = ai_findings.get("tool_uses", [])
+
         finding = {
             "title": inv.get("title") or title or f"Investigation {task_id}",
             "investigation_id": task_id,
+            "execution_id": execution_id,
             "status": inv.get("status", "UNKNOWN"),
-            "root_cause": inv.get("description", "")[:1000],
+            "report_md": report_md,
+            "tool_uses": tool_uses,
+            "root_cause": (
+                report_md.split("\n")[0][:300] if report_md
+                else inv.get("description", "")[:600]
+            ),
             "operator_portal_url": (
                 f"https://console.aws.amazon.com/devops-agent/spaces/"
                 f"{os.getenv('DOA_AGENT_SPACE_ID', '')}/tasks/{task_id}"
