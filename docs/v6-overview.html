@@ -628,63 +628,225 @@
 <!-- Demo Flow -->
 <div class="section">
   <h2>🔟 演示场景</h2>
-  <h3>Demo 1: 飞书智能问诊（主动）</h3>
+  <p style="color: var(--text-light); font-size: 1.05em;">本次演示包含 4 个完整场景,覆盖<strong>主动问诊</strong> + <strong>被动告警</strong> + <strong>诊断书展示</strong> + <strong>经验沉淀</strong>全链路。</p>
+
+  <!-- Demo 1: 飞书智能问诊 -->
+  <h3 style="margin-top: 28px; padding-top: 16px; border-top: 2px dashed var(--border);">
+    🎬 Demo 1: 飞书 @机器人 智能问诊（主动场景,~5 min）
+  </h3>
+  <p><strong>背景</strong>:SRE 在飞书群发现 demo-api 出现慢请求,直接 @ 机器人发起调查。</p>
+
+  <div style="background: #f0f4f8; padding: 16px; border-radius: 8px; margin: 12px 0; font-family: monospace; font-size: 0.92em;">
+    <div style="margin-bottom: 12px; padding: 10px; background: #dbeafe; border-radius: 6px;">
+      <strong>👤 用户在飞书群:</strong><br/>
+      <code style="color: var(--aws-dark);">@NLOps 帮我调查一下 demo-api 服务为什么慢</code>
+    </div>
+    <div style="margin-bottom: 12px; padding: 10px; background: #fef3c7; border-radius: 6px;">
+      <strong>🤖 机器人 3 秒后回复:</strong><br/>
+      <pre style="white-space: pre-wrap; font-size: 0.88em; margin: 6px 0;">🔍 已启动深度调查
+任务 ID: 39a8dd51-3724-4e81-a190-4114d1593927
+预计 5-15 分钟完成
+
+完成后将自动推送诊断书到本群。
+你也可以稍后 @ 我说 "生成 task_id xxx 的诊断书" 立即查看。</pre>
+    </div>
+    <div style="padding: 10px; background: #dcfce7; border-radius: 6px;">
+      <strong>📨 调查完成后 (~5 分钟),群里自动收到红色卡片:</strong><br/>
+      <pre style="white-space: pre-wrap; font-size: 0.88em; margin: 6px 0; background: white; padding: 12px; border-radius: 4px;">🚨 [HIGH] 帮我调查一下 demo-api 服务为什么慢
+
+🔬 根因摘要
+P99 延迟从 200ms 升至 1200ms,RDS 连接池使用率 95%。
+14:32 部署的 commit abc123 引入了一个未优化的 SQL 查询。
+
+🛠️ DOA 调用的工具
+use_aws · check-lambda-logs · check-s3-reports
+
+[📊 查看完整诊断书]   [🔍 DOA Operator]</pre>
+    </div>
+  </div>
   <div class="flow-step">
     <div class="flow-num">1</div>
-    <div class="flow-content">
-      用户在飞书群 <code>@NLOps demo-api 服务为什么慢？</code>
-    </div>
+    <div class="flow-content">用户 @机器人 发问 → API GW <code>/lark-event</code> → Lambda 立即返回 200(< 1s ack)</div>
   </div>
   <div class="flow-step">
     <div class="flow-num">2</div>
-    <div class="flow-content">
-      机器人 3-5 秒回复：<code>🔍 已启动深度调查 task_id: xxx-xxx，预计 5-15 分钟完成</code>
-    </div>
+    <div class="flow-content">Lambda 异步自调用 → 意图识别"调查"关键词 → 调 <code>start_investigation</code></div>
   </div>
   <div class="flow-step">
     <div class="flow-num">3</div>
-    <div class="flow-content">
-      DOA 自动应用 ECS Skill，跨源关联 CloudWatch + GitHub 部署历史
-    </div>
+    <div class="flow-content">DOA Investigation 启动,自动应用 ECS Skill (你上传的 ecs-troubleshooting)</div>
   </div>
   <div class="flow-step">
     <div class="flow-num">4</div>
-    <div class="flow-content">
-      调查完成 → 飞书群自动收到红色卡片（根因+诊断书按钮）
-    </div>
+    <div class="flow-content">DOA 跨源关联 CloudWatch P99 + GitHub commit + RDS 指标</div>
   </div>
   <div class="flow-step">
     <div class="flow-num">5</div>
-    <div class="flow-content">
-      点击按钮 → 浏览器打开图文并茂的 HTML 诊断书（含趋势图、AI 报告、自动 Skill 提示）
-    </div>
+    <div class="flow-content">EventBridge 通知 → Lambda 调 ListJournalRecords 抓 AI 报告</div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">6</div>
+    <div class="flow-content">Nova Pro 增强:生成中文公告 + SRE 摘要 + 自动 Skill</div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">7</div>
+    <div class="flow-content">Jinja2 渲染 → S3 上传 → 飞书卡片推送 + SES 邮件双通道</div>
   </div>
 
-  <h3 style="margin-top: 24px;">Demo 2: 凌晨告警闭环（被动）</h3>
+  <!-- Demo 2: 凌晨告警闭环 -->
+  <h3 style="margin-top: 28px; padding-top: 16px; border-top: 2px dashed var(--border);">
+    🎬 Demo 2: 凌晨告警闭环（被动场景,~4 min）
+  </h3>
+  <p><strong>背景</strong>:凌晨 2 点 demo-api 高 CPU,SRE 在睡觉。完整 AI 自主响应链路。</p>
+
+  <div style="background: #f0f4f8; padding: 16px; border-radius: 8px; margin: 12px 0;">
+    <div style="margin-bottom: 12px; padding: 10px; background: #fee2e2; border-radius: 6px;">
+      <strong>🚨 02:00 CW Alarm 触发:</strong><br/>
+      <code style="font-family: monospace;">demo-api-high-cpu · CPU > 80% · 持续 5 分钟</code>
+    </div>
+    <div style="margin-bottom: 12px; padding: 10px; background: #fef3c7; border-radius: 6px;">
+      <strong>⚙️ 02:00:15 NLOps 自动响应:</strong><br/>
+      <pre style="white-space: pre-wrap; font-size: 0.88em; margin: 6px 0; font-family: monospace;">SNS → Lambda /webhook-incoming
+  → DOA start_investigation (priority=HIGH)
+  → DOA 应用 ECS Skill 自动调查中...</pre>
+    </div>
+    <div style="padding: 10px; background: #dcfce7; border-radius: 6px;">
+      <strong>📧 02:08 SRE 邮箱收到 (HTML 邮件):</strong><br/>
+      <pre style="white-space: pre-wrap; font-size: 0.88em; margin: 6px 0; background: white; padding: 12px; border-radius: 4px;">主题: 🚨 [HIGH] [ALARM] demo-api-high-cpu
+
+根因: RDS Proxy 连接池容量不足,
+      P99 延迟从 200ms 升至 1200ms
+
+[📊 查看完整诊断书]   [🔍 DOA Operator Portal]
+
+故障公告草稿(可直接发布):
+"我们注意到 demo-api 在 02:00 出现了访问缓慢,
+ 技术团队已定位问题,预计 02:30 完全恢复。"</pre>
+    </div>
+  </div>
   <div class="flow-step">
     <div class="flow-num">1</div>
-    <div class="flow-content">
-      CW Alarm 进入 ALARM 状态（凌晨 2 点 SRE 在睡觉）
-    </div>
+    <div class="flow-content">CW Alarm → SNS Topic (已订阅 Lambda)</div>
   </div>
   <div class="flow-step">
     <div class="flow-num">2</div>
-    <div class="flow-content">
-      SNS → Lambda → DOA 自动启动 Investigation（无人干预）
-    </div>
+    <div class="flow-content">Lambda 解析 SNS 消息 → 调 <code>doa.start_investigation</code></div>
   </div>
   <div class="flow-step">
     <div class="flow-num">3</div>
-    <div class="flow-content">
-      DOA 完成调查 → EventBridge → Lambda 渲染诊断书
-    </div>
+    <div class="flow-content">DOA Skills 自动匹配 (ecs-troubleshooting · rds-connection-pool)</div>
   </div>
   <div class="flow-step">
     <div class="flow-num">4</div>
-    <div class="flow-content">
-      早上 SRE 起床 → 飞书已有完整调查卡片 + 邮箱已有故障公告草稿（直接发布即可）
+    <div class="flow-content">DOA 跨源关联 5-15 分钟完成调查</div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">5</div>
+    <div class="flow-content">EventBridge → Lambda → AI 增强 (公告 + 摘要 + Skill 沉淀)</div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">6</div>
+    <div class="flow-content">飞书群红色卡片 + SES HTML 邮件 + 自动 Skill 上传 S3</div>
+  </div>
+
+  <!-- Demo 3: HTML 诊断书走查 -->
+  <h3 style="margin-top: 28px; padding-top: 16px; border-top: 2px dashed var(--border);">
+    🎬 Demo 3: HTML 诊断书展示（~3 min）
+  </h3>
+  <p><strong>背景</strong>:点击邮件/飞书的"查看完整诊断书"按钮,展开诊断书各模块。</p>
+
+  <div class="cap-grid">
+    <div class="cap-card" style="border-top-color: var(--aws-dark);">
+      <h4>📌 顶部 Hero</h4>
+      <div class="desc">标题 + 严重度 Badge + 报告 ID + Investigation ID + 生成时间</div>
+    </div>
+    <div class="cap-card" style="border-top-color: var(--red);">
+      <h4>🔬 根因分析</h4>
+      <div class="desc">AI 提取的核心结论(单选,最可能根因)</div>
+    </div>
+    <div class="cap-card" style="border-top-color: var(--aws-blue);">
+      <h4>📣 故障公告</h4>
+      <div class="desc">蓝色卡片,Nova Pro 自动生成的中文用户公告</div>
+    </div>
+    <div class="cap-card" style="border-top-color: var(--aws-orange);">
+      <h4>📝 SRE 内部摘要</h4>
+      <div class="desc">橙色卡片,3 条行动项 + 影响评估</div>
+    </div>
+    <div class="cap-card" style="border-top-color: var(--green);">
+      <h4>🧬 自动 Skill</h4>
+      <div class="desc">绿色卡片,提示"本次经验已沉淀为 Skill"+ 下载链接</div>
+    </div>
+    <div class="cap-card">
+      <h4>📊 ECharts 趋势图</h4>
+      <div class="desc">最近 60 分钟 CPU 趋势 + 告警阈值标记线</div>
+    </div>
+    <div class="cap-card">
+      <h4>🤖 完整 AI 报告</h4>
+      <div class="desc">marked.js 渲染的 markdown 全文,含表格/列表/代码</div>
+    </div>
+    <div class="cap-card">
+      <h4>🛠️ 工具使用标签</h4>
+      <div class="desc">DOA 调用的所有 AWS API 标签 (use_aws · cw · x-ray)</div>
+    </div>
+    <div class="cap-card">
+      <h4>🔗 关联跳转</h4>
+      <div class="desc">DOA Operator Console 链接,深度运维用户跳转使用</div>
     </div>
   </div>
+  <p style="margin-top: 16px; padding: 14px; background: #fff7ed; border-left: 4px solid var(--aws-orange); border-radius: 6px;">
+    <strong>核心卖点</strong>:URL 永久有效(S3 公开 /reports/*) · 手机/电脑双端友好 · 可分享给老板/客户 · 可邮件附件
+  </p>
+
+  <!-- Demo 4: 经验沉淀闭环 -->
+  <h3 style="margin-top: 28px; padding-top: 16px; border-top: 2px dashed var(--border);">
+    🎬 Demo 4: 经验沉淀闭环（~3 min）
+  </h3>
+  <p><strong>背景</strong>:展示 Investigation 完成后自动生成 Skill,下次相似问题秒级匹配。</p>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0;">
+    <div style="padding: 14px; background: #fef2f2; border-radius: 6px;">
+      <strong style="color: var(--red);">第 1 次故障 (无经验)</strong>
+      <div style="font-size: 0.88em; margin-top: 8px;">
+        <ul style="padding-left: 18px; margin: 0;">
+          <li>用户问 "demo-api 为什么慢"</li>
+          <li>DOA 全量探索:CW + Logs + X-Ray + Config</li>
+          <li>调查耗时 ~15 分钟</li>
+          <li>处理完成 → 自动生成 Skill markdown</li>
+          <li>上传 S3:<code>skills/auto/auto-demo-api-xxx.md</code></li>
+        </ul>
+      </div>
+    </div>
+    <div style="padding: 14px; background: #f0fdf4; border-radius: 6px;">
+      <strong style="color: var(--green);">第 N 次相似故障 (经验匹配)</strong>
+      <div style="font-size: 0.88em; margin-top: 8px;">
+        <ul style="padding-left: 18px; margin: 0;">
+          <li>类似告警再次触发</li>
+          <li>DOA 自动加载 auto-demo-api-xxx Skill</li>
+          <li>按 Skill 中的"调查步骤"直奔关键路径</li>
+          <li>调查耗时 ~2 分钟 (减少 87%)</li>
+          <li>修复建议直接来自历史经验</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <p style="font-style: italic; text-align: center; padding: 14px; background: #fff7ed; border-radius: 6px;">
+    "每次故障处理完,团队的 AWS 运维经验自动增长一点。<strong>知识不再依赖个人,而是沉淀在系统里。</strong>"
+  </p>
+
+  <h3>本次演示视频清单</h3>
+  <table class="cmp">
+    <thead>
+      <tr><th>视频</th><th>时长</th><th>内容</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>demo1-lark-chat.mp4</td><td>~5 min</td><td>飞书 @机器人完整对话流程</td></tr>
+      <tr><td>demo2-alarm-loop.mp4</td><td>~4 min</td><td>告警 → DOA → 飞书+邮件闭环 (含 5-15min 加速)</td></tr>
+      <tr><td>demo3-html-walkthrough.mp4</td><td>~3 min</td><td>HTML 诊断书逐模块展示</td></tr>
+      <tr><td>demo4-skill-evolution.mp4</td><td>~3 min</td><td>第 1 次 vs 第 2 次:Skill 自动匹配前后对比</td></tr>
+    </tbody>
+  </table>
+</div>
 </div>
 
 <!-- Performance Analysis (PPT page 17) -->
