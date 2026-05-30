@@ -48,11 +48,10 @@ class ReportGenerator:
             Body=html.encode("utf-8"),
             ContentType="text/html; charset=utf-8",
         )
-        url = self._s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": self.bucket, "Key": key},
-            ExpiresIn=_PRESIGN_DAYS * 86400,
-        )
+        # Use direct virtual-hosted-style URL since bucket has public read on
+        # /reports/* via bucket policy. This avoids STS temp credential expiry
+        # issues with presigned URLs.
+        url = f"https://{self.bucket}.s3.{_REGION}.amazonaws.com/{key}"
         logger.info("report.uploaded", extra={"key": key, "report_id": report_id})
         return url
 
