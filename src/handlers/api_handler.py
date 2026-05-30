@@ -1,20 +1,22 @@
-"""L1 Orchestrator Lambda — API Gateway entry for /chat /voice /webhook.
+"""L1 Orchestrator Lambda — single entry for all NLOps traffic.
 
-Flow:
-  1. Parse caller-channel envelope (Quick / WeCom / Feishu / Quick voice)
-  2. Load or create Session (DDB)
-  3. If voice payload: ASR via Nova Sonic
-  4. Build Plan via Router Agent
-  5. Run Plan via Orchestrator (Strands-style in-proc)
-  6. If plan asks for Execution -> issue Confirm Token + return confirm card
-  7. If plan finishes -> render Report -> return URL
-  8. Save Session + audit
+After the v3 merge (方案 B), this Lambda hosts:
+  • POST /chat /voice /webhook                    (chat path — IM / Quick / voice)
+  • POST /mcp /mcp-public /mcp-quick /sse /message (MCP path — Quick Desktop / DOA)
+  • GET  /sse /mcp-public                         (MCP SSE handshake)
+  • EventBridge events (source=aws.aidevops)      (DOA investigation completion)
+
+Routing is done by ``handler()`` based on event shape:
+  - event.source == "aws.aidevops" → eventbridge_handler
+  - path startswith /mcp or /sse or /message → mcp_handler
+  - otherwise → _chat_flow (Strands Agents SDK driven)
+
+Write actions are still isolated in L2 ExecutionFn (cross-Lambda invoke).
 """
 from __future__ import annotations
 
 import json
 import os
-import time
 import uuid
 from typing import Any
 
@@ -26,14 +28,36 @@ from orchestrator.factory import build_default
 
 logger = get_logger(__name__)
 
-# Build orchestrator once per Lambda warm container
+# Build orchestrator once per warm container (Strands Agent + Bedrock client)
 ORCH = build_default()
 SESSIONS = SessionStore()
 AUDIT = Audit()
 
 
+# ============================================================
+# Top-level router — distinguishes EventBridge / MCP / chat
+# ============================================================
 def handler(event: dict, context) -> dict:
-    """API Gateway proxy integration handler."""
+    """Single entry handler. Routes by event shape."""
+    # 1. EventBridge event (DOA investigation completion etc.)
+    if event.get("source") == "aws.aidevops":
+        from handlers.eventbridge_handler import handler as eb_handler
+        return eb_handler(event, context)
+
+    # 2. API Gateway proxy event — branch by path
+    path = (event.get("path") or event.get("resource") or "").lower()
+    if path.startswith("/mcp") or path in ("/sse", "/message") or "/sse" in path or "/message" in path:
+        from handlers.mcp_handler import handler as mcp_h
+        return mcp_h(event, context)
+
+    # 3. Default — chat / voice / webhook
+    return _chat_flow(event, context)
+
+
+# ============================================================
+# Chat / Voice / Webhook flow (Strands Agents SDK)
+# ============================================================
+def _chat_flow(event: dict, context) -> dict:
     trace_id = f"trc-{uuid.uuid4()}"
     body = _parse_body(event)
     path = event.get("resource") or event.get("path", "/")
@@ -46,12 +70,15 @@ def handler(event: dict, context) -> dict:
         channel=channel,
     )
 
-    # ---- ASR if voice ------------------------------------------------- #
-    user_text: str = body.get("text", "")
+    # ---- ASR if voice (Nova Sonic) ---------------------------------- #
+    user_text: str = body.get("text", "") or body.get("message", "")
     if path.endswith("/voice") and body.get("audio_b64"):
-        from voice.nova_sonic import NovaSonic
-        user_text = NovaSonic().transcribe_b64(body["audio_b64"])
-        logger.info("api.asr_done", extra={"trace_id": trace_id, "len": len(user_text)})
+        try:
+            from voice.nova_sonic import NovaSonic
+            user_text = NovaSonic().transcribe_b64(body["audio_b64"])
+            logger.info("api.asr_done", extra={"trace_id": trace_id, "len": len(user_text)})
+        except Exception as exc:  # noqa
+            logger.warning("api.asr_failed", extra={"err": str(exc), "trace_id": trace_id})
 
     if not user_text:
         return _resp(400, {"error": "empty input"})
@@ -67,36 +94,33 @@ def handler(event: dict, context) -> dict:
         user_confirmed=bool(body.get("user_confirmed")),
     )
 
-    AUDIT.log(trace_id, "Entry", "received", "ok", {"channel": channel, "len": len(user_text)})
+    AUDIT.log(trace_id, "Entry", "received", "ok",
+              {"channel": channel, "len": len(user_text)})
 
-    # ---- Plan + execute ---------------------------------------------- #
+    # ---- Strands Agent does the heavy lifting ----------------------- #
     try:
-        plan = ORCH.run_step(ctx, {"tool": "router", "args": {"query": user_text}})
-        logger.info("api.plan", extra={"trace_id": trace_id, "intent": plan.get("intent")})
-
-        results = ORCH.run_plan(ctx, plan)
+        result = ORCH.run(ctx, user_text)
     except Exception as exc:
-        logger.exception("api.plan_failed", extra={"trace_id": trace_id})
-        AUDIT.log(trace_id, "Entry", "plan", "error", {"err": str(exc)})
-        return _resp(500, {"error": str(exc)})
+        logger.exception("api.strands_failed", extra={"trace_id": trace_id})
+        AUDIT.log(trace_id, "Entry", "strands", "error", {"err": str(exc)})
+        return _resp(500, {"error": str(exc), "trace_id": trace_id})
 
-    # ---- Compose response -------------------------------------------- #
-    reply = _summarise(plan, results)
-    session.append("assistant", reply.get("text", ""))
+    reply_text = result.get("text", "")
+    session.append("assistant", reply_text)
     SESSIONS.save(session)
 
     return _resp(200, {
         "trace_id": trace_id,
         "session_id": session.session_id,
-        "intent": plan.get("intent"),
-        "reply": reply,
-        "results": results,
+        "reply": {"text": reply_text},
+        "engine": result.get("engine", "strands-agents"),
+        "model": result.get("model"),
     })
 
 
-# --------------------------------------------------------------------- #
+# ============================================================
 # Helpers
-# --------------------------------------------------------------------- #
+# ============================================================
 def _parse_body(event: dict) -> dict:
     body = event.get("body")
     if isinstance(body, str):
@@ -115,29 +139,12 @@ def _channel_from_path(path: str) -> str:
     return "quick"
 
 
-def _summarise(plan: dict, results: dict) -> dict:
-    intent = plan.get("intent")
-    if "report" in results and isinstance(results["report"], dict) and results["report"].get("html_url"):
-        return {
-            "text": f"分析完成：{plan.get('title') or intent}",
-            "html_url": results["report"]["html_url"],
-        }
-    if "analysis" in results and results["analysis"].get("status") == "in_progress":
-        return {
-            "text": "我正在调用 AWS DevOps Agent 做深度调查，预计 5-15 分钟出完整报告。完成后会推送到此对话。",
-            "investigation_id": results["analysis"]["investigation_id"],
-        }
-    if "discovery" in results:
-        return {
-            "text": "已获取最新指标和健康状况。",
-            "findings": results["discovery"].get("findings"),
-        }
-    return {"text": "已收到，正在处理。"}
-
-
 def _resp(status: int, body: dict) -> dict:
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "application/json"},
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+        },
         "body": json.dumps(body, ensure_ascii=False),
     }

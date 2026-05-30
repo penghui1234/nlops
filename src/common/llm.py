@@ -125,8 +125,28 @@ class LLM:
     # Internals — protocol shape differs per model family.
     # ------------------------------------------------------------------ #
     def _build_body(self, prompt: str, system: str | None) -> dict[str, Any]:
-        # OpenAI-compatible Chat Completions (Kimi / Moonshot / etc.)
-        if any(k in self.model_id for k in ("moonshot", "kimi")):
+        # Amazon Nova family (nova-pro / nova-lite / nova-premier / nova-2-*)
+        # Uses messages format similar to Claude but with `inferenceConfig`.
+        # NB: titan is a different family (`amazon.titan-*`) and uses inputText.
+        if self.model_id.startswith("amazon.nova") or ".amazon.nova" in self.model_id:
+            body: dict[str, Any] = {
+                "messages": [
+                    {"role": "user", "content": [{"text": prompt}]}
+                ],
+                "inferenceConfig": {
+                    "maxTokens": self.max_tokens,
+                    "temperature": self.temperature,
+                },
+            }
+            if system:
+                body["system"] = [{"text": system}]
+            return body
+        # OpenAI-compatible Chat Completions (Kimi / Moonshot / GLM / DeepSeek-V3 /
+        # Mistral large / GPT-OSS / Qwen / etc.)
+        if any(k in self.model_id for k in (
+            "moonshot", "kimi", "deepseek", "glm", "qwen",
+            "mistral", "gpt-oss", "minimax", "gemma", "nemotron", "palmyra",
+        )):
             messages = []
             if system:
                 messages.append({"role": "system", "content": system})
@@ -140,7 +160,7 @@ class LLM:
             }
         # Anthropic Claude
         if "anthropic" in self.model_id or "claude" in self.model_id:
-            body: dict[str, Any] = {
+            body = {
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": self.max_tokens,
                 "temperature": self.temperature,
@@ -149,7 +169,15 @@ class LLM:
             if system:
                 body["system"] = system
             return body
-        # Nova / Titan style
+        # Meta Llama (text-completion style)
+        if "llama" in self.model_id or "meta." in self.model_id:
+            full_prompt = (system + "\n\n" + prompt) if system else prompt
+            return {
+                "prompt": full_prompt,
+                "max_gen_len": self.max_tokens,
+                "temperature": self.temperature,
+            }
+        # Amazon Titan / fallback
         return {
             "inputText": (system + "\n\n" + prompt) if system else prompt,
             "textGenerationConfig": {
@@ -160,7 +188,13 @@ class LLM:
 
     @staticmethod
     def _extract_text(payload: dict[str, Any]) -> str:
-        # OpenAI-compatible (Kimi / Moonshot)
+        # Amazon Nova response: {"output": {"message": {"content": [{"text": "..."}]}}}
+        if "output" in payload and isinstance(payload["output"], dict):
+            msg = payload["output"].get("message") or {}
+            content = msg.get("content") or []
+            if isinstance(content, list):
+                return "".join(c.get("text", "") for c in content if isinstance(c, dict))
+        # OpenAI-compatible (Kimi / Moonshot / DeepSeek-V3 / GLM / etc.)
         if "choices" in payload:
             choice = payload["choices"][0]
             msg = choice.get("message") or {}
@@ -175,12 +209,15 @@ class LLM:
             return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
         if "results" in payload:  # Titan
             return payload["results"][0].get("outputText", "")
-        if "output" in payload:  # Nova
-            return payload["output"]["message"]["content"][0].get("text", "")
+        if "generation" in payload:  # Meta Llama
+            return payload["generation"]
         return json.dumps(payload)
 
     @staticmethod
     def _extract_stream_delta(data: dict[str, Any]) -> str:
+        # Nova streaming: {"contentBlockDelta": {"delta": {"text": "..."}}}
+        if "contentBlockDelta" in data:
+            return data["contentBlockDelta"].get("delta", {}).get("text", "") or ""
         # OpenAI-style streaming
         if "choices" in data:
             ch = data["choices"][0]
@@ -189,7 +226,10 @@ class LLM:
         # Anthropic streaming
         if data.get("type") == "content_block_delta":
             return data["delta"].get("text", "")
-        # Titan / Nova streaming
+        # Meta Llama streaming
+        if "generation" in data:
+            return data["generation"]
+        # Titan / Nova-titan streaming
         if "outputText" in data:
             return data["outputText"]
         if "delta" in data and isinstance(data["delta"], dict):

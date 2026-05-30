@@ -1,7 +1,11 @@
 # NLOps 需求分析
 
-> 版本: v2.0  ·  最后更新: 2026-05-17  ·  基于 PPT《自然语言驱动的 AI 运维平台》重构
-> v2 修订：将 AWS DevOps Agent 作为底层引擎；保留 6 个逻辑 Agent 概念但物理实现合并；明确 region 与定价
+> 版本: v3.0  ·  最后更新: 2026-05-19  ·  基于 PPT《自然语言驱动的 AI 运维平台》v3 重写
+> v3 修订（vs v2 2026-05-17）：
+> - **入口收窄到 Quick Desktop 主线**（飞书 / 企微 / Voice 移到 v4）
+> - **经验沉淀方案调整**：DOA Custom Skill API 在 boto3 SDK 中不存在（实测 2026-05），改用 **Bedrock KB 双写 + AuditTable 历史检索** 实现，FR-2.5 / 3.2 / 3.4 narrative 同步调整
+> - **Lambda 数 4 → 2**（方案 B 合并 L3+L4 入 L1）
+> - **boto3 service name** `aidevops` → `devops-agent`（实测校正）
 
 ---
 
@@ -48,36 +52,36 @@
 | FR-1.3 | 支持文字输入与文字回复（含 Markdown / 卡片） | P0 | IM 卡片正常渲染，URL 可点击 |
 | FR-1.4 | 输出 HTML 分析页 URL（30 天有效） | P0 | URL 可在浏览器和 IM 内打开，过期返回 403 |
 
-### 3.2 智能编排（6 个逻辑 Agent，DevOps Agent 作为引擎） (P0)
+### 3.2 智能编排（v3：1 Strands Agent + 5 Tool） (P0)
 
-| 逻辑 Agent | 职责 | 物理实现 / 引擎 |
+| 逻辑 Tool | 职责 | 物理实现 / 引擎 |
 |---|---|---|
-| **Router** | 意图识别（巡检 / 排障 / 修复 / 经验查询） | Orchestrator Lambda 内 Bedrock LLM |
-| **Discovery** | 拉指标 / 日志 / 拓扑 / 事件 | DevOps Agent on-demand chat（核心）+ CloudWatch 直连（fallback） |
-| **Analysis** | 根因分析（只读） | DevOps Agent investigation（核心能力，94% 准确率） |
-| **Knowledge** | 经验沉淀 + 历史匹配 | DevOps Agent **Custom Skills** + 可选 Bedrock KB（兼容客户已有知识库） |
-| **Execution** | 用户确认后执行修复 | NLOps 独立 Execution Lambda（写操作隔离 + Confirm Token + Policy Guard）|
-| **Report** | 生成 HTML 分析页 | Orchestrator Lambda 内 Jinja2 + ECharts，写 S3 |
+| **(Routing)** | 意图识别 → 选工具 | **Strands Agents 1.40 SDK 内置**（v2 的 RouterAgent 已删除） |
+| **discover_service** | 拉指标 / 日志 / 拓扑 / 事件 | DOA on-demand chat（核心）+ CloudWatch 直连（fallback） |
+| **deep_investigate** | 根因分析（只读） | DOA `CreateBacklogTask`（taskType=INVESTIGATION，94% 准确率） |
+| **search_knowledge** | 经验沉淀 + 历史匹配 | **Bedrock KB + AuditTable scan**（DOA Custom Skill API 不在 SDK） |
+| **request_execute** | 用户确认后执行修复 | NLOps 独立 ExecutionFn Lambda（写隔离 + Confirm Token + Policy Guard） |
+| **render_report** | 生成 HTML 分析页 | Jinja2 + ECharts，写 S3（OrchestratorFn 内进程） |
 
 | ID | 需求 | 优先级 | 验收标准 |
 |----|------|--------|---------|
-| FR-2.1 | Router 识别用户意图，分发到对应 Agent 链路 | P0 | 意图识别准确率 ≥ 90% |
-| FR-2.2 | Discovery 通过 DevOps Agent on-demand chat 拉数据；DevOps Agent 不可达时降级到 CloudWatch 直连 | P0 | 双路径都能返回结构化结果 |
-| FR-2.3 | Analysis 调用 DevOps Agent investigation API，返回 RCA + 证据 + 修复建议 | P0 | 输出 root cause / impact / fix_steps / evidence 四字段 |
-| FR-2.4 | Execution 必须有 confirm_token + Policy 检查方可写 AWS API | P0 | 缺 token 自动拒绝；越权资源被拦截；全部写操作进 audit log |
-| FR-2.5 | Knowledge 把客户私有 runbook / 故障手册 注册为 DevOps Agent **Custom Skills** | P0 | 同一类故障第二次发生时，DevOps Agent 自动应用对应 Skill |
-| FR-2.6 | Report 把 DevOps Agent 输出转 HTML 诊断书（含图表 / 解读 / 建议 / 证据） | P0 | 报告 < 5s 生成，包含至少 1 图 + 文字解读 |
-| FR-2.7 | 平台暴露 NLOps MCP Server，把客户内部工具（工单系统 / 自研 APM / CMDB）作为 tool 提供给 DevOps Agent | P1 | DevOps Agent 调查时能调用我们暴露的 MCP tool |
-| FR-2.8 | EventBridge 订阅 DevOps Agent 自治调查事件（告警驱动场景），自动渲染 HTML 并推送 IM | P1 | CW 告警 → DevOps Agent 自动调查 → IM 卡片落地，全程无人工 |
+| FR-2.1 | Strands Agent 自动识别用户意图，分发到对应 Tool | P0 | 工具选择准确率 ≥ 95%（基于 Nova Pro 实测） |
+| FR-2.2 | discover_service 通过 DOA on-demand chat 拉数据；DOA 不可达时降级到 CloudWatch 直连 | P0 | 双路径都能返回结构化结果 |
+| FR-2.3 | deep_investigate 调用 DOA `CreateBacklogTask` API，返回 task_id；后续异步通过 EventBridge 取完整结果 | P0 | 输出 task_id / status / expected_minutes 三字段 |
+| FR-2.4 | request_execute 必须有 confirm_token + Policy 检查方可写 AWS API | P0 | 缺 token 自动拒绝；越权资源被拦截；全部写操作进 audit log |
+| FR-2.5 | search_knowledge 把客户私有 runbook / 故障手册 嵌入到 **Bedrock KB**（v3）。<br>~~原计划：注册为 DOA Custom Skill；实测 boto3 `devops-agent` 没有 CreateCustomSkill API，改走 KB 路径~~ | P0 | KB ingestion 成功率 ≥ 99%；retrieve top-5 相关性 ≥ 0.7 |
+| FR-2.6 | render_report 把 DOA 输出转 HTML 诊断书（含图表 / 解读 / 建议 / 证据） | P0 | 报告 < 5s 生成，包含至少 1 图 + 文字解读 |
+| FR-2.7 | 平台暴露 NLOps MCP Server，21 个工具（含 smart_diagnose / consult_devops_agent / request_confirm_token）给 Quick Desktop / DOA / 任意 MCP-aware AI | P0 | tools/list 返回 21；tools/call 全部能跑通（mock 或 real 模式） |
+| FR-2.8 | EventBridge 订阅 DOA 自治调查事件（告警驱动场景），自动渲染 HTML + SES 发邮件 + KB 沉淀 | P0 | CW 告警 → DOA 自动调查 → 邮件落地 + 诊断书 URL，全程无人工 |
 
 ### 3.3 经验闭环 (P0)
 
 | ID | 需求 | 优先级 | 验收标准 |
 |----|------|--------|---------|
 | FR-3.1 | 故障处理完成后自动生成结构化事件报告 | P0 | 含字段：时间线 / 根因 / 影响范围 / 修复步骤 / 验证结果 / 证据链 |
-| FR-3.2 | 事件报告自动注册为 DevOps Agent **Custom Skill**（替代原 KB 设计的部分能力） | P0 | 注册成功率 ≥ 99%，Skill 在调查中可被引用 |
-| FR-3.3 | 同时双写 Bedrock KB（兼容客户已有知识库 / 跨 Agent 共享） | P1 | KB 文档与 Skill 内容一致 |
-| FR-3.4 | 冷启动预置常见故障 Custom Skills（≥ 50 类） | P1 | 部署完即可命中常见 case |
+| FR-3.2 | 事件报告自动**写入 Bedrock KB**（v3 主路径，原 v2 计划的 DOA Custom Skill 因 SDK API 缺失改为通过 console UI 静态配置）| P0 | KB ingestion 成功率 ≥ 99%；KB 文档与 AuditTable 内容一致 |
+| FR-3.3 | 同时双写 S3 + AuditTable（兼容客户已有知识库 / 历史事件检索） | P0 | S3 + AuditTable 均能查到同一 incident_id |
+| FR-3.4 | **冷启动预置常见故障样例**（≥ 5 类，演示用；50 类为生产标准）| P1 | 部署完即可用 search_knowledge 命中常见 case |
 
 ### 3.4 分析页 / 报告 (P0)
 
