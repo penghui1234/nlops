@@ -4,6 +4,8 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>NLOps v4 · 自然语言驱动的 AI 运维平台</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <style>
   :root {
     --aws-orange: #ff9900;
@@ -172,9 +174,45 @@
     background: #fef3c7; padding: 2px 6px; border-radius: 3px;
     font-size: 0.9em;
   }
+  /* Sticky nav */
+  .nav-bar {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(35, 47, 62, 0.95); backdrop-filter: blur(8px);
+    color: white; padding: 12px 24px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    display: flex; gap: 18px; flex-wrap: wrap; justify-content: center;
+    font-size: 0.88em;
+  }
+  .nav-bar a {
+    color: #e5e7eb; text-decoration: none;
+    padding: 4px 10px; border-radius: 4px;
+    transition: background 0.2s, color 0.2s;
+  }
+  .nav-bar a:hover { background: rgba(255,153,0,0.2); color: var(--aws-orange); }
+  .nav-bar .brand { color: var(--aws-orange); font-weight: 700; }
+  /* Section anchors offset for sticky nav */
+  .section { scroll-margin-top: 80px; }
 </style>
 </head>
 <body>
+<!-- Sticky Nav -->
+<nav class="nav-bar">
+  <span class="brand">NLOps v4</span>
+  <a href="#problem">客户问题</a>
+  <a href="#requirement">需求</a>
+  <a href="#doa">DOA 简介</a>
+  <a href="#compare">业界对比</a>
+  <a href="#arch">架构</a>
+  <a href="#capabilities">核心能力</a>
+  <a href="#demo">Demo</a>
+  <a href="#perf">性能</a>
+  <a href="#competitor">竞品</a>
+  <a href="#cost">成本</a>
+  <a href="#roadmap">Roadmap</a>
+  <a href="#deploy">部署</a>
+  <a href="#diff">差异化</a>
+</nav>
+
 <div class="wrap">
 
 <!-- Hero -->
@@ -195,8 +233,7 @@
 </div>
 
 <!-- Customer Problem -->
-<div class="section">
-  <h2>1️⃣ 客户问题</h2>
+<div class="section" id="problem"><h2>1️⃣ 客户问题</h2>
   <p>某客户迁移 100+ 微服务到 AWS，大量使用 ECS / ALB / Lambda / RDS / ElastiCache 等托管服务。SRE 团队对 AWS 服务运维经验不足，希望快速完成问题定界定位，并逐步积累 AWS 运维经验。</p>
 
   <div class="pain-grid">
@@ -220,8 +257,7 @@
 </div>
 
 <!-- Customer Need -->
-<div class="section">
-  <h2>2️⃣ 客户要什么</h2>
+<div class="section" id="requirement"><h2>2️⃣ 客户要什么</h2>
   <div class="req-grid">
     <div class="req-card">
       <h4>💬 自然语言交互</h4>
@@ -243,8 +279,7 @@
 </div>
 
 <!-- AWS DOA Introduction (PPT page 6) -->
-<div class="section">
-  <h2>4️⃣ AWS DevOps Agent 简介</h2>
+<div class="section" id="doa"><h2>4️⃣ AWS DevOps Agent 简介</h2>
   <p style="font-size: 1.05em; padding: 16px 20px; background: #f0f9ff;
             border-left: 4px solid var(--aws-blue); border-radius: 6px;">
     <strong>实现卓越运营的前沿代理</strong> — DOA 是 AWS 于 2026-03 GA 的自主运维 AI，
@@ -271,8 +306,7 @@
 </div>
 
 <!-- AWS DOA Capabilities (PPT page 7) -->
-<div class="section">
-  <h2>5️⃣ DevOps Agent 6 大原生能力</h2>
+<div class="section" id="doacap"><h2>5️⃣ DevOps Agent 6 大原生能力</h2>
   <p>AWS 原生的智能运维助手,通过自然语言交互,帮工程师快速调查生产问题、探索基础设施、处理优化建议、生成可视化报告。</p>
   <div class="cap-grid">
     <div class="cap-card">
@@ -336,8 +370,7 @@
 </div>
 
 <!-- Industry Compare -->
-<div class="section">
-  <h2>6️⃣ 业界方案对比</h2>
+<div class="section" id="compare"><h2>6️⃣ 业界方案对比</h2>
   <table class="cmp">
     <thead>
       <tr><th>方案类型</th><th>代表产品</th><th>做法</th><th>弊端</th></tr>
@@ -372,10 +405,45 @@
 </div>
 
 <!-- Architecture -->
-<div class="section">
-  <h2>4️⃣ 整体架构 (v4)</h2>
+<div class="section" id="arch"><h2>4️⃣ 整体架构 (v4)</h2>
   <p>基于 AWS DevOps Agent 原生能力，仅自建 1 个 Lambda + 5 个 MCP 工具，~800 行代码。</p>
 
+  <div class="mermaid">
+flowchart TD
+    A[飞书 @机器人] --> APIGW
+    B[Quick Desktop] --> APIGW
+    C[CW Alarm] --> SNS[SNS Topic]
+    SNS --> APIGW
+    DOAEvent[DOA EventBridge] --> APIGW
+
+    APIGW[API Gateway REST] --> Lambda
+
+    subgraph Lambda[Orchestrator Lambda · 1024MB · Python 3.12]
+        direction LR
+        R1[/chat]
+        R2[/lark-event<br/>异步两段式]
+        R3[/mcp-quick<br/>5 MCP 工具]
+        R4[/webhook-incoming]
+        R5[EB Handler]
+    end
+
+    Lambda --> DOA[AWS DevOps Agent<br/>核心调查引擎<br/>3 Skills]
+    Lambda --> Nova[Bedrock Nova Pro<br/>AI 增强:<br/>故障公告 · SRE 摘要 · 自动 Skill]
+    Lambda --> S3[S3 Reports<br/>HTML 诊断书<br/>auto Skill]
+    Lambda --> SSM[SSM Runbook<br/>ECS / RDS 自动修复]
+    Lambda --> Out1[飞书群消息]
+    Lambda --> Out2[SES 邮件]
+
+    style DOA fill:#ff9900,stroke:#232f3e,color:#fff
+    style Lambda fill:#232f3e,stroke:#ff9900,color:#fff
+    style APIGW fill:#146eb4,color:#fff
+    style Nova fill:#fef3c7
+  </div>
+
+  <details style="margin-top: 16px;">
+    <summary style="cursor: pointer; padding: 8px; background: #f3f4f6; border-radius: 4px;">
+      🔍 查看 ASCII 版架构图（Fallback）
+    </summary>
   <pre class="arch-diagram">
 ┌──────────────────────────────────────────────────────────────────┐
 │                      <span class="highlight">交互层 (Entry Points)</span>                       │
@@ -405,11 +473,11 @@
 │ • GitHub       │  │ • 自动 Skill    │  │ • Sessions/Audit   │
 └────────────────┘  └─────────────────┘  └─────────────────────┘
 </pre>
+  </details>
 </div>
 
 <!-- Core Capabilities -->
-<div class="section">
-  <h2>5️⃣ 核心能力（已实现）</h2>
+<div class="section" id="capabilities"><h2>5️⃣ 核心能力（已实现）</h2>
   <div class="cap-grid">
     <div class="cap-card">
       <h4>🔍 智能诊断</h4>
@@ -471,8 +539,7 @@
 </div>
 
 <!-- Core Capability 1: 智能诊断 (PPT page 10) -->
-<div class="section">
-  <h2>🌟 核心能力 1：智能诊断</h2>
+<div class="section" id="cap1"><h2>🌟 核心能力 1：智能诊断</h2>
   <p style="font-size: 1.15em; padding: 16px 20px; background: #fff7ed;
             border-left: 4px solid var(--aws-orange); border-radius: 6px;">
     <strong>"用户说一句话 → DOA 跨源关联分析 → HTML 诊断书 → 邮件/IM 通知"</strong>
@@ -496,8 +563,7 @@
 </div>
 
 <!-- Core Capability 2: HTML 诊断书 (PPT page 11) -->
-<div class="section">
-  <h2>🌟 核心能力 2：HTML 诊断书</h2>
+<div class="section" id="cap2"><h2>🌟 核心能力 2：HTML 诊断书</h2>
   <p style="font-size: 1.1em; color: var(--text-light);">
     <strong>不是 Dashboard,是 AI 诊断书</strong> —— 类比传统 Dashboard 是"体检数值表",NLOps 诊断书是"医生写的诊断报告"。
   </p>
@@ -547,8 +613,7 @@
 </div>
 
 <!-- Core Capability 3: 告警自动闭环 (PPT page 12) -->
-<div class="section">
-  <h2>🌟 核心能力 3：告警自动闭环</h2>
+<div class="section" id="cap3"><h2>🌟 核心能力 3：告警自动闭环</h2>
   <p style="font-size: 1.1em; padding: 16px 20px; background: #fef2f2;
             border-left: 4px solid var(--red); border-radius: 6px;">
     <strong>凌晨告警 → Webhook + HMAC → DOA 自动调查 → 飞书 + 邮件双通道 + HTML 诊断书</strong>
@@ -584,8 +649,7 @@
 </div>
 
 <!-- Core Capability 4: 经验沉淀 (PPT page 13) -->
-<div class="section">
-  <h2>🌟 核心能力 4：经验自动沉淀</h2>
+<div class="section" id="cap4"><h2>🌟 核心能力 4：经验自动沉淀</h2>
   <p style="font-size: 1.1em;">每次故障处理完成后,自动从 AI 报告提取根因+处理流程,生成新 Skill。下次相似问题 DOA 自动应用此经验,秒级出方案。</p>
   <h3>经验闭环流程</h3>
   <div class="flow-step">
@@ -626,8 +690,7 @@
 </div>
 
 <!-- Demo Flow -->
-<div class="section">
-  <h2>🔟 演示场景</h2>
+<div class="section" id="demo"><h2>🔟 演示场景</h2>
   <p style="color: var(--text-light); font-size: 1.05em;">本次演示包含 4 个完整场景,覆盖<strong>主动问诊</strong> + <strong>被动告警</strong> + <strong>诊断书展示</strong> + <strong>经验沉淀</strong>全链路。</p>
 
   <!-- Demo 1: 飞书智能问诊 -->
@@ -850,8 +913,7 @@ use_aws · check-lambda-logs · check-s3-reports
 </div>
 
 <!-- Performance Analysis (PPT page 17) -->
-<div class="section">
-  <h2>1️⃣1️⃣ 性能分析</h2>
+<div class="section" id="perf"><h2>1️⃣1️⃣ 性能分析</h2>
   <h3>v4 5 个 MCP 工具耗时</h3>
   <table class="cmp">
     <thead>
@@ -883,11 +945,16 @@ use_aws · check-lambda-logs · check-s3-reports
       <tr><td>代码级修复 (Kiro)</td><td><span class="status-todo">🔮 Roadmap</span></td><td>Phase 3 (Agent-ready Spec)</td></tr>
     </tbody>
   </table>
+
+  <h3 style="margin-top: 32px;">📊 v3 vs v4 精简对比</h3>
+  <div id="chart-v3v4" style="width: 100%; height: 320px;"></div>
+
+  <h3 style="margin-top: 32px;">⚡ MTTR 改进趋势</h3>
+  <div id="chart-mttr" style="width: 100%; height: 280px;"></div>
 </div>
 
 <!-- Competitor Analysis (PPT page 18) -->
-<div class="section">
-  <h2>1️⃣2️⃣ 竞品分析</h2>
+<div class="section" id="competitor"><h2>1️⃣2️⃣ 竞品分析</h2>
   <table class="cmp">
     <thead>
       <tr><th>维度</th><th>NLOps v4 (我们)</th><th>Datadog Bits AI</th><th>Dynatrace Davis AI</th></tr>
@@ -946,8 +1013,7 @@ use_aws · check-lambda-logs · check-s3-reports
 </div>
 
 <!-- Cost -->
-<div class="section">
-  <h2>1️⃣3️⃣ 成本估算（50 用户/月）</h2>
+<div class="section" id="cost"><h2>1️⃣3️⃣ 成本估算（50 用户/月）</h2>
   <table class="cost">
     <thead>
       <tr><th>服务</th><th>规格</th><th>月费用</th></tr>
@@ -966,11 +1032,16 @@ use_aws · check-lambda-logs · check-s3-reports
       <tr class="net"><td>净成本</td><td>50 用户场景</td><td>~$452/月 (~$9/用户)</td></tr>
     </tbody>
   </table>
+
+  <h3 style="margin-top: 32px;">📊 与竞品成本对比（50 人团队/月）</h3>
+  <div id="chart-cost" style="width: 100%; height: 360px;"></div>
+
+  <h3 style="margin-top: 32px;">💰 v3 → v4 成本变化</h3>
+  <div id="chart-cost-trend" style="width: 100%; height: 280px;"></div>
 </div>
 
 <!-- Roadmap -->
-<div class="section">
-  <h2>1️⃣4️⃣ 路线图</h2>
+<div class="section" id="roadmap"><h2>1️⃣4️⃣ 路线图</h2>
   <ul class="phase-list">
     <li class="done">
       <strong>Phase 1 · 核心闭环 ✅</strong><br/>
@@ -1000,8 +1071,7 @@ use_aws · check-lambda-logs · check-s3-reports
 </div>
 
 <!-- Deployment Diagram (PPT page 22) -->
-<div class="section">
-  <h2>1️⃣5️⃣ 部署架构（us-east-1）</h2>
+<div class="section" id="deploy"><h2>1️⃣5️⃣ 部署架构（us-east-1）</h2>
   <p>NLOps v4 采用最小化 Serverless 部署:1 个 Lambda、2 张 DDB 表、1 个 S3 bucket、1 个 API Gateway、2 个 SSM Document。</p>
   <pre class="arch-diagram">
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -1055,8 +1125,7 @@ use_aws · check-lambda-logs · check-s3-reports
 </div>
 
 <!-- Differentiation -->
-<div class="section">
-  <h2>1️⃣6️⃣ 核心差异化 (vs DevOps Agent 原生)</h2>
+<div class="section" id="diff"><h2>1️⃣6️⃣ 核心差异化 (vs DevOps Agent 原生)</h2>
   <table class="cmp">
     <thead>
       <tr><th>维度</th><th>DOA 原生</th><th>NLOps v4 增量</th></tr>
@@ -1111,5 +1180,112 @@ use_aws · check-lambda-logs · check-s3-reports
 </div>
 
 </div>
+
+<script>
+// ECharts 1: 竞品月成本对比
+if (document.getElementById('chart-cost')) {
+  echarts.init(document.getElementById('chart-cost')).setOption({
+    title: { text: '50 人团队月成本对比 (USD)', left: 'center' },
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: ['NLOps v4', 'Datadog Bits AI', 'Dynatrace Davis'] },
+    yAxis: { type: 'value', name: 'USD/月' },
+    series: [{
+      type: 'bar',
+      data: [
+        { value: 452, itemStyle: { color: '#16a34a' } },
+        { value: 4500, itemStyle: { color: '#dc2626' } },
+        { value: 5400, itemStyle: { color: '#dc2626' } }
+      ],
+      label: { show: true, position: 'top', formatter: '${c}' },
+      barWidth: '50%'
+    }],
+    grid: { left: 60, right: 30, top: 50, bottom: 40 }
+  });
+}
+
+// ECharts 2: 成本趋势 v3 → v4
+if (document.getElementById('chart-cost-trend')) {
+  echarts.init(document.getElementById('chart-cost-trend')).setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['v3', 'v4'], top: 0 },
+    xAxis: { type: 'category', data: ['DOA', 'Bedrock', 'Lambda', 'KB', 'API GW', '其他'] },
+    yAxis: { type: 'value', name: 'USD/月' },
+    series: [
+      {
+        name: 'v3', type: 'bar', barGap: 0,
+        data: [1200, 300, 16, 150, 4, 12],
+        itemStyle: { color: '#9ca3af' }
+      },
+      {
+        name: 'v4', type: 'bar',
+        data: [900, 60, 5, 0, 3, 9],
+        itemStyle: { color: '#ff9900' }
+      }
+    ],
+    grid: { left: 60, right: 30, top: 40, bottom: 40 }
+  });
+}
+
+// ECharts 3: v3 vs v4 精简对比
+if (document.getElementById('chart-v3v4')) {
+  echarts.init(document.getElementById('chart-v3v4')).setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['v3', 'v4'], top: 0 },
+    xAxis: { type: 'category', data: ['Lambda 数', 'MCP 工具数', '代码行数', '月成本($)'] },
+    yAxis: [
+      { type: 'value', name: '数量', position: 'left' }
+    ],
+    series: [
+      {
+        name: 'v3', type: 'bar',
+        data: [2, 21, 3000, 1682],
+        itemStyle: { color: '#9ca3af' },
+        label: { show: true, position: 'top' }
+      },
+      {
+        name: 'v4', type: 'bar',
+        data: [1, 5, 800, 452],
+        itemStyle: { color: '#ff9900' },
+        label: { show: true, position: 'top' }
+      }
+    ],
+    grid: { left: 60, right: 30, top: 40, bottom: 40 }
+  });
+}
+
+// ECharts 4: MTTR 改进趋势
+if (document.getElementById('chart-mttr')) {
+  echarts.init(document.getElementById('chart-mttr')).setOption({
+    title: { text: 'MTTR 改进 (分钟)', left: 'center' },
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: ['传统人工', 'NLOps 首次', 'NLOps Skill 复用', 'Roadmap (自动修复)'] },
+    yAxis: { type: 'value', name: '分钟' },
+    series: [{
+      type: 'line',
+      smooth: true,
+      data: [120, 15, 2, 0.5],
+      lineStyle: { width: 4, color: '#ff9900' },
+      areaStyle: { opacity: 0.3, color: '#ff9900' },
+      symbolSize: 12,
+      label: { show: true, formatter: '{c} min', position: 'top' }
+    }],
+    grid: { left: 60, right: 40, top: 60, bottom: 40 }
+  });
+}
+
+// 让所有图表 resize
+window.addEventListener('resize', function() {
+  ['chart-cost', 'chart-cost-trend', 'chart-v3v4', 'chart-mttr'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el && el.__echarts) el.__echarts.resize();
+  });
+});
+
+// Mermaid 初始化
+if (typeof mermaid !== 'undefined') {
+  mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+}
+</script>
+
 </body>
 </html>
