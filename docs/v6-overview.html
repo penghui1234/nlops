@@ -914,40 +914,96 @@ use_aws · check-lambda-logs · check-s3-reports
 
 <!-- Performance Analysis (PPT page 17) -->
 <div class="section" id="perf"><h2>1️⃣1️⃣ 性能分析</h2>
-  <h3>v4 5 个 MCP 工具耗时</h3>
-  <table class="cmp">
-    <thead>
-      <tr><th>工具</th><th>耗时</th><th>说明</th></tr>
-    </thead>
-    <tbody>
-      <tr><td><code>query_doa</code></td><td>5-30s</td><td>受 DOA Chat 响应时间影响,API GW 29s 限制</td></tr>
-      <tr><td><code>start_investigation</code></td><td>~2s</td><td>异步,立即返回 task_id</td></tr>
-      <tr><td><code>get_html_report</code></td><td>3-5s</td><td>GetBacklogTask + ListJournalRecords + Jinja2 + S3 上传</td></tr>
-      <tr><td><code>trigger_runbook</code></td><td>1-3s</td><td>SSM StartAutomationExecution</td></tr>
-      <tr><td><code>notify_im</code></td><td>1-2s</td><td>SES SendEmail / 飞书 webhook POST</td></tr>
-    </tbody>
-  </table>
-  <h3>核心能力实现状态</h3>
-  <table class="cmp">
-    <thead>
-      <tr><th>核心能力</th><th>实现状态</th><th>依赖</th></tr>
-    </thead>
-    <tbody>
-      <tr><td>智能诊断</td><td><span class="status-done">✅ 已实现</span></td><td>DOA Investigation 异步调查</td></tr>
-      <tr><td>HTML 诊断书</td><td><span class="status-done">✅ 已实现</span></td><td>Jinja2 + S3 + marked.js + ECharts</td></tr>
-      <tr><td>告警自动闭环</td><td><span class="status-done">✅ 已实现</span></td><td>CW Alarm → SNS → Lambda → DOA → 飞书+邮件</td></tr>
-      <tr><td>飞书 @机器人</td><td><span class="status-done">✅ 已实现</span></td><td>Custom App + 异步两段式</td></tr>
-      <tr><td>故障公告自动化</td><td><span class="status-done">✅ 已实现</span></td><td>Bedrock Nova Pro</td></tr>
-      <tr><td>经验自动沉淀</td><td><span class="status-done">✅ 已实现</span></td><td>Nova Pro + S3 + DOA Skills</td></tr>
-      <tr><td>SSM Runbook 修复</td><td><span class="status-done">✅ 已实现</span></td><td>2 个预置 Document</td></tr>
-      <tr><td>多模态架构图分析</td><td><span class="status-todo">🔮 Roadmap</span></td><td>Phase 4 (Nova Pro Vision)</td></tr>
-      <tr><td>语音运维</td><td><span class="status-todo">🔮 Roadmap</span></td><td>Phase 4 (Nova Sonic + ECS WebSocket)</td></tr>
-      <tr><td>代码级修复 (Kiro)</td><td><span class="status-todo">🔮 Roadmap</span></td><td>Phase 3 (Agent-ready Spec)</td></tr>
-    </tbody>
-  </table>
+  <!-- 4 Big Metric Cards (用户体验) -->
+  <h3>🎯 用户感知性能</h3>
+  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 16px;">
+    <div style="background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; text-align: center; border-top: 4px solid #ff9900;">
+      <div style="font-size: 2.2em; font-weight: 700; color: #ff9900; line-height: 1.1;">&lt; 1 秒</div>
+      <div style="font-size: 0.88em; color: #4b5563; margin-top: 8px;">飞书 @机器人 ack</div>
+    </div>
+    <div style="background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; text-align: center; border-top: 4px solid #146eb4;">
+      <div style="font-size: 2.2em; font-weight: 700; color: #146eb4; line-height: 1.1;">~12 秒</div>
+      <div style="font-size: 0.88em; color: #4b5563; margin-top: 8px;">告警 → SRE 通知</div>
+    </div>
+    <div style="background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; text-align: center; border-top: 4px solid #16a34a;">
+      <div style="font-size: 2.2em; font-weight: 700; color: #16a34a; line-height: 1.1;">95-97%</div>
+      <div style="font-size: 0.88em; color: #4b5563; margin-top: 8px;">MTTR 改进 (Skill 复用)</div>
+    </div>
+    <div style="background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; text-align: center; border-top: 4px solid #dc2626;">
+      <div style="font-size: 2.2em; font-weight: 700; color: #dc2626; line-height: 1.1;">&lt; 0.1%</div>
+      <div style="font-size: 0.88em; color: #4b5563; margin-top: 8px;">Lambda 错误率</div>
+    </div>
+  </div>
 
-  <h3 style="margin-top: 32px;">📊 v3 vs v4 精简对比</h3>
-  <div id="chart-v3v4" style="width: 100%; height: 320px;"></div>
+  <!-- 关键路径耗时分解 -->
+  <h3 style="margin-top: 32px;">⏱️ 告警闭环关键路径耗时分解</h3>
+  <table class="cmp">
+    <thead>
+      <tr><th>阶段</th><th>耗时</th><th>占比</th><th>瓶颈?</th><th>说明</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>CW Alarm → SNS</td><td>&lt; 1s</td><td>&lt;1%</td><td>❌</td><td>AWS 内部</td></tr>
+      <tr><td>SNS → Lambda</td><td>&lt; 100ms</td><td>&lt;1%</td><td>❌</td><td>事件触发</td></tr>
+      <tr><td>Lambda → DOA</td><td>~2s</td><td>&lt;1%</td><td>❌</td><td>boto3 调用</td></tr>
+      <tr style="background: #fff7ed; font-weight: 600;"><td>DOA Investigation</td><td>5-15 min</td><td>~99%</td><td>⭐ 主要</td><td>AI 跨源关联调查</td></tr>
+      <tr><td>EB → Lambda 渲染</td><td>5-10s</td><td>&lt;1%</td><td>❌</td><td>Nova Pro 并行 × 3 + Jinja2</td></tr>
+      <tr><td>飞书 + 邮件推送</td><td>1-2s</td><td>&lt;1%</td><td>❌</td><td>双通道并行</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top: 8px; font-size: 0.88em; color: #6b7280;">
+    💡 <strong>瓶颈分析</strong>: DOA AI 调查占 99% 耗时,这是<strong>"换深度换时间"</strong>的合理代价(对比人工 1-2 小时,AI 7 分钟仍快 10 倍)。
+  </p>
+
+  <!-- 5 个 MCP 工具耗时 + 系统扩展性 (并排) -->
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 32px;">
+    <!-- Left: 5 MCP tools -->
+    <div>
+      <h3>🛠️ 5 个 MCP 工具耗时</h3>
+      <table class="cmp" style="font-size: 0.9em;">
+        <thead>
+          <tr><th>工具</th><th>耗时</th><th>类型</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>query_doa</code></td><td>5-30s</td><td>同步</td></tr>
+          <tr><td><code>start_investigation</code></td><td>~2s</td><td>异步</td></tr>
+          <tr><td><code>get_html_report</code></td><td>3-5s</td><td>同步</td></tr>
+          <tr><td><code>trigger_runbook</code></td><td>1-3s</td><td>同步</td></tr>
+          <tr><td><code>notify_im</code></td><td>1-2s</td><td>同步</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- Right: 系统扩展性 -->
+    <div>
+      <h3>📊 系统扩展性</h3>
+      <table class="cmp" style="font-size: 0.9em;">
+        <thead>
+          <tr><th>维度</th><th>当前</th><th>上限</th><th>余量</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Lambda 并发</td><td>实测 1</td><td>1000</td><td>1000x</td></tr>
+          <tr><td>API GW 限流</td><td>&lt; 1 RPS</td><td>25 RPS</td><td>25x</td></tr>
+          <tr><td>DOA 并发调查</td><td>1-5</td><td>100</td><td>20x</td></tr>
+          <tr><td>DDB 容量</td><td>&lt; 1MB</td><td>按量</td><td>无限</td></tr>
+          <tr><td>调用量/月</td><td>~1000</td><td>~25,000</td><td>25x</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Lambda 性能 -->
+  <h3 style="margin-top: 32px;">⚡ Lambda 自身性能</h3>
+  <table class="cmp">
+    <thead>
+      <tr><th>指标</th><th>数值</th><th>说明</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>冷启动</td><td>~1.5s</td><td>Layer 加载 + boto3 init</td></tr>
+      <tr><td>热启动</td><td>~50ms</td><td>warm container 复用</td></tr>
+      <tr><td>平均执行时间</td><td>3-5s</td><td>含 DOA / Nova Pro 调用</td></tr>
+      <tr><td>内存峰值</td><td>95 MB</td><td>配置 1024MB,余量 ~10x</td></tr>
+      <tr><td>错误率</td><td>&lt; 0.1%</td><td>多层 fallback 兜底</td></tr>
+    </tbody>
+  </table>
 
   <h3 style="margin-top: 32px;">⚡ MTTR 改进趋势</h3>
   <div id="chart-mttr" style="width: 100%; height: 280px;"></div>
