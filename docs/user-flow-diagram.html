@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>NLOps v4 - 用户主动问诊流程</title>
+<style>
+  :root {
+    --aws-orange: #ff9900;
+    --aws-dark: #232f3e;
+    --aws-blue: #146eb4;
+    --aws-light-blue: #79b9f7;
+    --bg: #f7f8fa;
+    --green: #16a34a;
+    --red: #dc2626;
+    --yellow: #d97706;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+                 "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: white; margin: 0; padding: 24px;
+    color: var(--aws-dark);
+  }
+  .page { max-width: 1300px; margin: 0 auto; }
+
+  h1 {
+    font-size: 1.7em; margin: 0 0 4px;
+    color: var(--aws-dark);
+  }
+  .subtitle { color: #6b7280; margin: 0 0 30px; font-size: 0.95em; }
+
+  /* ============ Stage Cards ============ */
+  .flow {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 40px;
+    position: relative;
+  }
+  .stage {
+    background: white;
+    border-radius: 12px;
+    border: 2px solid #e5e7eb;
+    padding: 20px;
+    position: relative;
+    transition: transform 0.2s;
+  }
+  .stage::before {
+    content: attr(data-num);
+    position: absolute;
+    top: -16px; left: 16px;
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--aws-orange);
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1em; font-weight: 700;
+    box-shadow: 0 0 0 4px white, 0 0 0 5px var(--aws-orange);
+  }
+  .stage h3 {
+    margin: 8px 0 12px;
+    color: var(--aws-dark);
+    font-size: 1.1em;
+  }
+  .stage .summary {
+    color: #6b7280; font-size: 0.88em;
+    margin-bottom: 16px; line-height: 1.5;
+  }
+  .stage .icon-row {
+    display: flex; gap: 10px; flex-wrap: wrap;
+    align-items: center; justify-content: center;
+    margin: 12px 0;
+  }
+  .stage .ic {
+    width: 56px; height: 56px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 24px;
+    font-weight: 700;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  }
+  .stage .ic-name {
+    font-size: 0.7em;
+    text-align: center;
+    color: #4b5563;
+    margin-top: 4px;
+    font-weight: 600;
+  }
+  .ic-wrap {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 0;
+    width: 70px;
+  }
+  .stage .detail {
+    font-size: 0.82em;
+    line-height: 1.6;
+    color: #374151;
+    background: #f9fafb;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border-left: 3px solid var(--aws-orange);
+    margin-top: 12px;
+  }
+  .stage .detail strong { color: var(--aws-dark); }
+  .stage .time-tag {
+    display: inline-block;
+    background: var(--aws-orange);
+    color: white;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.78em;
+    font-weight: 600;
+    margin-top: 8px;
+  }
+
+  /* Service Color Categories */
+  .ic-user { background: #6b7280; }
+  .ic-lark { background: #00d6b9; }
+  .ic-quick { background: #232f3e; }
+  .ic-apigw { background: #8c4fff; }
+  .ic-lambda { background: #ed7100; }
+  .ic-doa { background: #00a4a6; }
+  .ic-bedrock { background: #01a88d; }
+  .ic-s3 { background: #277116; }
+  .ic-cw { background: #e7157b; }
+  .ic-eb { background: #d05f00; }
+  .ic-ses { background: #d05f00; }
+
+  /* ============ Arrow between stages ============ */
+  .arrow {
+    position: absolute;
+    top: 50%;
+    width: 16px; height: 16px;
+    transform: translateY(-50%);
+    color: var(--aws-orange);
+    font-size: 24px;
+    pointer-events: none;
+  }
+
+  /* ============ Sample Dialog ============ */
+  .dialog-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin: 30px 0;
+  }
+  .dialog {
+    background: #f0f4f8;
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .dialog h4 {
+    margin: 0 0 12px;
+    color: var(--aws-dark);
+    font-size: 0.95em;
+  }
+  .bubble {
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    font-size: 0.88em;
+    line-height: 1.5;
+  }
+  .bubble.user {
+    background: #dbeafe;
+    border-left: 3px solid var(--aws-blue);
+  }
+  .bubble.bot {
+    background: #fef3c7;
+    border-left: 3px solid var(--aws-orange);
+  }
+  .bubble.alert {
+    background: #fee2e2;
+    border-left: 3px solid var(--red);
+  }
+  .bubble strong { color: var(--aws-dark); }
+  .bubble code {
+    background: white;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: ui-monospace, monospace;
+    font-size: 0.85em;
+  }
+
+  /* ============ Timeline (overall) ============ */
+  .timeline-section {
+    background: linear-gradient(to right, #fff7ed, white);
+    border: 1px solid #fed7aa;
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin: 30px 0;
+  }
+  .timeline-section h3 {
+    margin: 0 0 16px;
+    color: var(--aws-dark);
+  }
+  .timeline-bar {
+    position: relative;
+    height: 80px;
+    background: linear-gradient(to right,
+      var(--aws-orange) 0%,
+      var(--aws-orange) 5%,
+      #fef3c7 5%,
+      #fef3c7 10%,
+      var(--aws-blue) 10%,
+      var(--aws-blue) 70%,
+      var(--green) 70%,
+      var(--green) 80%,
+      #c925d1 80%,
+      #c925d1 100%);
+    border-radius: 6px;
+    margin: 16px 0 8px;
+  }
+  .timeline-marker {
+    position: absolute;
+    top: 0; bottom: 0;
+    border-left: 1px solid white;
+    color: white;
+    font-size: 0.75em;
+    text-align: center;
+    padding: 8px 4px;
+    font-weight: 600;
+  }
+  .timeline-axis {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75em;
+    color: #6b7280;
+    margin-top: 4px;
+  }
+
+  /* ============ Tech Stack Below ============ */
+  .tech-stack {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-top: 30px;
+  }
+  .tech-item {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 14px 16px;
+    border-left: 4px solid var(--aws-orange);
+  }
+  .tech-item h4 {
+    margin: 0 0 6px;
+    color: var(--aws-dark);
+    font-size: 0.95em;
+  }
+  .tech-item p {
+    margin: 0;
+    color: #6b7280;
+    font-size: 0.82em;
+    line-height: 1.5;
+  }
+
+  /* Print friendly */
+  @media print {
+    body { padding: 10px; }
+    .stage { break-inside: avoid; }
+  }
+
+  @media (max-width: 900px) {
+    .flow { grid-template-columns: 1fr; }
+    .arrow { display: none; }
+    .dialog-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>用户主动问诊 · 4 步流程</h1>
+<p class="subtitle">
+  从"用户一句话"到"邮件/IM 通知"的完整数据流 ·
+  <strong>5-15 分钟全自动闭环</strong>
+</p>
+
+<!-- ============ Main Flow (4 Stages) ============ -->
+<div class="flow">
+
+  <!-- Stage 1: User Input -->
+  <div class="stage" data-num="1">
+    <h3>用户说一句话</h3>
+    <p class="summary">SRE 通过任意入口提问</p>
+    <div class="icon-row">
+      <div class="ic-wrap">
+        <div class="ic ic-user">👤</div>
+        <div class="ic-name">SRE</div>
+      </div>
+      <div class="ic-wrap">
+        <div class="ic ic-lark">📱</div>
+        <div class="ic-name">飞书</div>
+      </div>
+      <div class="ic-wrap">
+        <div class="ic ic-quick">🖥️</div>
+        <div class="ic-name">Quick</div>
+      </div>
+    </div>
+    <div class="detail">
+      <strong>3 个入口</strong>:<br/>
+      • 飞书群 @机器人<br/>
+      • Quick Desktop MCP<br/>
+      • 直接 curl API<br/><br/>
+      <strong>触发动作</strong>:<br/>
+      意图识别 (调查/查询/诊断书)
+    </div>
+    <div class="time-tag">⏱️ &lt; 1 秒</div>
+  </div>
+
+  <!-- Stage 2: DOA Cross-source Analysis -->
+  <div class="stage" data-num="2">
+    <h3>DOA 跨源关联分析</h3>
+    <p class="summary">DOA 自主决定调用工具,跨源关联</p>
+    <div class="icon-row">
+      <div class="ic-wrap">
+        <div class="ic ic-doa">🧠</div>
+        <div class="ic-name">DOA</div>
+      </div>
+      <div class="ic-wrap">
+        <div class="ic ic-cw">📊</div>
+        <div class="ic-name">CloudWatch</div>
+      </div>
+      <div class="ic-wrap">
+        <div class="ic ic-cw">📈</div>
+        <div class="ic-name">X-Ray</div>
+      </div>
+    </div>
+    <div class="detail">
+      <strong>DOA 自主调用</strong>:<br/>
+      • CloudWatch Metrics<br/>
+      • CloudWatch Logs Insights<br/>
+      • X-Ray Service Map<br/>
+      • GitHub Deployments<br/>
+      • Skills 经验匹配<br/><br/>
+      <strong>输出</strong>:<br/>
+      根因 + 时间线 + 因果链
+    </div>
+    <div class="time-tag">⏱️ 5-15 分钟</div>
+  </div>
+
+  <!-- Stage 3: HTML Diagnostic -->
+  <div class="stage" data-num="3">
+    <h3>HTML 诊断书</h3>
+    <p class="summary">渲染 7-Tab 仪表盘式报告</p>
+    <div class="icon-row">
+      <div class="ic-wrap">
+        <div class="ic ic-eb">🎯</div>
+        <div class="ic-name">EventBridge</div>
+      </div>
+      <div class="ic-wrap">
+        <div class="ic ic-bedrock">✨</div>
+        <div class="ic-name">Nova Pro</div>
+      </div>
+      <div class="ic-wrap">
+        <div class="ic ic-s3">🪣</div>
+        <div class="ic-name">S3</div>
+      </div>
+    </div>
+    <div class="detail">
+      <strong>EB 触发 Lambda</strong>:<br/>
+      • ListJournalRecords 抓 AI 报告<br/>
+      • Nova Pro 增强:<br/>
+      &nbsp;&nbsp;- 故障公告(中文)<br/>
+      &nbsp;&nbsp;- SRE 摘要<br/>
+      &nbsp;&nbsp;- 自动 Skill<br/>
+      • CW 拉指标 → ECharts<br/>
+      • Jinja2 渲染 7-Tab → S3
+    </div>
+    <div class="time-tag">⏱️ 3-5 秒</div>
+  </div>
+
+  <!-- Stage 4: IM/Email Notification -->
+  <div class="stage" data-num="4">
+    <h3>邮件/IM 通知</h3>
+    <p class="summary">双通道推送给 SRE 团队</p>
+    <div class="icon-row">
+      <div class="ic-wrap">
+        <div class="ic ic-lark">📱</div>
+        <div class="ic-name">飞书群</div>
+      </div>
+      <div class="ic-wrap">
+        <div class="ic ic-ses">📧</div>
+        <div class="ic-name">SES</div>
+      </div>
+    </div>
+    <div class="detail">
+      <strong>飞书群</strong>:<br/>
+      • 消息卡片 (红/橙/黄)<br/>
+      • 严重度徽章<br/>
+      • [📊 诊断书] 按钮<br/>
+      • [🔍 DOA Operator] 按钮<br/><br/>
+      <strong>SES 邮件</strong>:<br/>
+      • HTML 邮件<br/>
+      • 故障公告草稿<br/>
+      • 诊断书链接
+    </div>
+    <div class="time-tag">⏱️ 1-2 秒</div>
+  </div>
+</div>
+
+<!-- ============ Sample Dialog ============ -->
+<h2 style="color: var(--aws-dark); margin-top: 40px;">实际对话示例</h2>
+
+<div class="dialog-row">
+  <!-- User asks -->
+  <div class="dialog">
+    <h4>📱 飞书群对话 (用户视角)</h4>
+    <div class="bubble user">
+      <strong>👤 SRE:</strong><br/>
+      <code>@NLOps 帮我调查一下 demo-api 服务为什么慢</code>
+    </div>
+    <div class="bubble bot">
+      <strong>🤖 NLOps 机器人 (3 秒后):</strong><br/>
+      🔍 已启动深度调查<br/>
+      任务 ID: <code>39a8dd51-3724-4e81...</code><br/>
+      预计 5-15 分钟完成
+    </div>
+    <div style="text-align:center; color:#6b7280; font-size:0.85em; margin: 12px 0;">
+      ⋮<br/>
+      （DOA 后台调查中,5-15 分钟）<br/>
+      ⋮
+    </div>
+    <div class="bubble alert">
+      <strong>🚨 [HIGH] demo-api 服务延迟</strong><br/>
+      <strong>🔬 根因摘要</strong><br/>
+      P99 延迟从 200ms 升至 1200ms,<br/>
+      RDS 连接池使用率 95%。<br/>
+      14:32 部署的 commit abc123 引入了一个未优化的 SQL 查询。<br/><br/>
+      <strong>🛠️ DOA 调用的工具</strong><br/>
+      <code>use_aws</code> · <code>cw-logs</code> · <code>x-ray</code><br/><br/>
+      [📊 查看完整诊断书] [🔍 DOA Operator]
+    </div>
+  </div>
+
+  <!-- Email -->
+  <div class="dialog">
+    <h4>📧 SRE 邮箱（同时收到）</h4>
+    <div style="background: white; padding: 16px; border-radius: 8px; border: 1px solid #e5e7eb;">
+      <div style="border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 12px;">
+        <strong>主题</strong>: 🚨 [HIGH] demo-api 服务延迟<br/>
+        <strong>发件</strong>: penghuichen@nwcdcloud.cn<br/>
+        <strong>时间</strong>: 14:35
+      </div>
+      <p style="margin: 0; font-size: 0.88em;">
+        <strong>根因</strong>: RDS Proxy 连接池容量不足,P99 延迟从 200ms 升至 1200ms。
+      </p>
+      <div style="background: #fff7ed; padding: 12px; border-radius: 6px; margin: 12px 0; border-left: 3px solid var(--aws-orange);">
+        <strong>📣 故障公告草稿</strong><br/>
+        <em style="font-size: 0.85em; line-height: 1.5;">
+        "我们注意到 demo-api 在 14:32 出现了访问缓慢的情况。
+        技术团队已定位问题,预计 15:00 前完全恢复。
+        给您带来的不便,我们深表歉意。"
+        </em>
+      </div>
+      <p style="margin: 12px 0 0;">
+        <a href="#" style="background: var(--aws-orange); color: white; padding: 8px 14px; border-radius: 4px; text-decoration: none; font-size: 0.88em;">📊 查看完整诊断书</a>
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Timeline ============ -->
+<div class="timeline-section">
+  <h3>⏱️ 完整时间线</h3>
+  <div class="timeline-bar">
+    <div class="timeline-marker" style="left: 0%; width: 5%;">①<br/>提问</div>
+    <div class="timeline-marker" style="left: 5%; width: 5%; color: #232f3e;">②<br/>启动</div>
+    <div class="timeline-marker" style="left: 10%; width: 60%;">DOA 调查</div>
+    <div class="timeline-marker" style="left: 70%; width: 10%;">③ HTML</div>
+    <div class="timeline-marker" style="left: 80%; width: 20%;">④ 通知</div>
+  </div>
+  <div class="timeline-axis">
+    <span>0s</span>
+    <span>3s ack</span>
+    <span>5-15 min · DOA</span>
+    <span>+5s 渲染</span>
+    <span>+2s 推送</span>
+  </div>
+  <p style="margin-top: 12px; color: #6b7280; font-size: 0.88em;">
+    <strong>关键设计</strong>: 飞书 ack 必须 &lt; 3s,所以用 <strong>异步两段式</strong>(Stage 1 立即 ack + Stage 2 异步处理)。
+    DOA 调查耗时不阻塞用户,完成后通过 EventBridge 推送结果。
+  </p>
+</div>
+
+<!-- ============ Tech Stack ============ -->
+<h2 style="color: var(--aws-dark); margin-top: 40px;">支撑技术栈</h2>
+
+<div class="tech-stack">
+  <div class="tech-item">
+    <h4>① 入口层</h4>
+    <p>飞书 Custom App + 异步两段式 (Lambda 自调用满足 3s ack)</p>
+  </div>
+  <div class="tech-item">
+    <h4>② AI 引擎</h4>
+    <p>AWS DevOps Agent (跨源关联) · Bedrock Nova Pro (内容增强)</p>
+  </div>
+  <div class="tech-item">
+    <h4>③ 渲染层</h4>
+    <p>Lambda + Jinja2 + marked.js + ECharts + Mermaid · S3 永久 URL</p>
+  </div>
+  <div class="tech-item">
+    <h4>④ 通知层</h4>
+    <p>飞书 Custom Robot Webhook (群消息卡片) + Amazon SES (HTML 邮件)</p>
+  </div>
+</div>
+
+<!-- ============ Footer ============ -->
+<div style="margin-top: 40px; text-align: center; color: #6b7280; font-size: 0.85em; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+  NLOps v4 · 西云数据 · 陈朋辉 · 2026-06-02 演示<br/>
+  <a href="https://github.com/penghui1234/nlops" style="color: var(--aws-blue); text-decoration: none;">github.com/penghui1234/nlops</a>
+</div>
+
+</div>
+</body>
+</html>
