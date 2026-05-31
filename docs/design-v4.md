@@ -132,56 +132,241 @@
 ### 3.1 告警自动闭环（主流程）
 
 ```
-CW Alarm ALARM
+CW Alarm 触发 (CloudWatch 进入 ALARM 状态)
     │
-    ▼ SNS → Lambda (webhook_forwarder)
+    ▼ AlarmAction → SNS Topic (NLOpsAlarmTopic)
     │
-    ▼ POST DevOps Agent Webhook (HMAC 签名)
+    ▼ SNS → Lambda Subscription
     │
-    ▼ DOA 自动启动 Investigation
-    │   ├── 查询 CloudWatch Metrics (异常时段)
-    │   ├── 查询 CW Logs / Splunk (错误日志)
-    │   ├── 查询 X-Ray (慢调用链)
-    │   ├── 查询 GitHub (最近部署)
-    │   ├── 匹配 Skills (历史经验)
-    │   └── 调用 NLOps MCP Server (补充分析)
+    ▼ Orchestrator Lambda (_handle_alarm_webhook)
+    │   ├── 解析 SNS Records[0].Sns.Message
+    │   │     └── 提取 AlarmName / NewStateValue / NewStateReason
+    │   └── 调用 DevOpsAgent.start_investigation()
     │
-    ▼ Investigation Completed (5-15 min)
+    ▼ DevOps Agent (boto3 create_backlog_task)
+    │   ├── taskType: INVESTIGATION
+    │   ├── title: "[ALARM] <alarm_name>"
+    │   └── priority: HIGH (state=ALARM 时)
     │
-    ├──▶ Slack 通知 (根因 + 建议)
+    ▼ DOA 自动调查 (5-15 min · 无人干预)
+    │   ├── 自动应用 Skills:
+    │   │     ├── ecs-troubleshooting (匹配 ECS 告警)
+    │   │     ├── rds-connection-pool (匹配 RDS 告警)
+    │   │     └── lambda-throttling   (匹配 Lambda 告警)
+    │   ├── 跨源关联:
+    │   │     ├── CloudWatch Metrics (告警时段前后)
+    │   │     ├── CloudWatch Logs (异常日志)
+    │   │     ├── X-Ray Traces (慢调用链)
+    │   │     └── GitHub Deployments (最近 30 min 部署)
+    │   └── 输出: 根因 + Mitigation Plan + 证据链
     │
-    ├──▶ EventBridge → Report Lambda
-    │       └── 渲染 HTML 诊断书 → S3 Presigned URL
-    │       └── SES 邮件 (含诊断书链接)
+    ▼ EventBridge: aws.devopsagent · "Investigation Completed"
+    │   detail.metadata.task_id / agent_space_id / execution_id
+    │   detail.data.status = COMPLETED
     │
-    ├──▶ Mitigation Plan 生成
-    │       ├── Low Risk → SSM Runbook 自动执行
-    │       └── High Risk → Agent-ready Spec → Kiro PR
+    ▼ Orchestrator Lambda (_handle_doa_event)
+    │   ├── 1. 解析嵌套事件结构
+    │   │     └── metadata.task_id + data.status
+    │   ├── 2. ListJournalRecords → 抓 AI 完整 markdown 报告
+    │   ├── 3. Nova Pro 增强 (并行 3 个调用):
+    │   │     ├── generate_customer_announcement → 中文用户公告
+    │   │     ├── generate_internal_summary      → SRE 摘要
+    │   │     └── generate_skill_markdown        → 自动 Skill 上传 S3
+    │   ├── 4. CloudWatch GetMetricData → ECharts 趋势图
+    │   ├── 5. Jinja2 渲染 7-Tab HTML → S3 永久 URL
+    │   └── 6. 双通道推送
     │
-    └──▶ Skills 自动更新 (经验沉淀)
+    ▼ 双通道通知 (并行)
+    │   ├──▶ 飞书群消息卡片 (LarkBot.send_card · Custom Robot Webhook)
+    │   │     ├── 标题: 🚨 [HIGH] <alarm_name>
+    │   │     ├── 颜色: 红/橙/黄 (按 severity)
+    │   │     ├── 根因摘要 + DOA 调用工具列表
+    │   │     ├── [📊 查看完整诊断书] (按钮)
+    │   │     └── [🔍 DOA Operator]   (按钮)
+    │   │
+    │   └──▶ SES HTML 邮件 (penghuichen@nwcdcloud.cn)
+    │         ├── 主题: 🚨 [HIGH] <alarm_name>
+    │         ├── 根因 + 严重度
+    │         ├── 故障公告草稿 (橙色高亮,可直接发布)
+    │         ├── [📊 查看完整诊断书] (按钮)
+    │         └── [DOA Operator Portal] (链接)
+    │
+    ▼ DDB 审计日志 (AuditTable)
+        put_item(trace_id, ts, agent="EventBridge", status="ok",
+                 payload={task_id, html_url, email, lark})
 ```
 
 ### 3.2 主动巡检（用户触发）
 
 ```
-用户 (IM/语音/Q Desktop): "demo-api 服务怎么样？"
+用户在飞书群 @机器人 / Quick Desktop 发问
     │
-    ▼ Orchestration Lambda
-    │   ├── Nova Sonic ASR (语音→文字, 如适用)
-    │   └── Nova Pro 意图识别
+    │ "@NLOps demo-api 服务为什么慢"
     │
-    ▼ 路由决策:
-    │   ├── 简单查询 → DOA Chat (5-30s)
-    │   ├── 深度分析 → DOA Investigation (5-15min)
-    │   └── 历史查询 → Skills 检索
+    ▼ POST /lark-event 或 /mcp-quick
     │
-    ▼ 结果处理:
-    │   ├── 文字回复 → IM/Q Desktop
-    │   ├── HTML 诊断书 → S3 URL
-    │   └── Nova Sonic TTS (文字→语音, 如适用)
+    ▼ Orchestrator Lambda (Stage 1, 同步 < 1s)
+    │   ├── 解析事件 + event_id 去重
+    │   ├── 意图识别 (调查 / 诊断书 / 一般查询)
+    │   └── lambda.invoke 自调用 (异步)
+    │   ↓ 立即返回 200 OK
+    │
+    ▼ Orchestrator Lambda (Stage 2, 异步)
+    │   ↓ 调用对应工具
+    │
+    ▼ DevOps Agent (跨源关联分析, 5-15 min)
+    │   ├── CloudWatch Metrics (P99 / CPU / 错误率)
+    │   ├── CloudWatch Logs Insights (异常日志模式)
+    │   ├── X-Ray Service Map (慢调用链路)
+    │   ├── GitHub Deployments (最近部署历史)
+    │   └── Skills 自动匹配 (ECS / RDS / Lambda 经验包)
+    │
+    ▼ EventBridge: aws.devopsagent · "Investigation Completed"
+    │
+    ▼ Orchestrator Lambda (EB Handler)
+    │   ├── ListJournalRecords → 抓 AI 完整 markdown 报告
+    │   ├── Bedrock Nova Pro 增强:
+    │   │     ├── 故障公告 (中文用户公告)
+    │   │     ├── SRE 内部摘要 (含 3 行动项)
+    │   │     └── 自动 Skill markdown
+    │   ├── CloudWatch GetMetricData → ECharts 趋势图
+    │   └── Jinja2 渲染 7-Tab HTML → S3 永久 URL
+    │
+    ▼ 双通道通知
+    │   ├──▶ 飞书群消息卡片 (Custom Robot Webhook)
+    │   └──▶ SES HTML 邮件
+    │
+    ▼ 用户查看诊断书 (浏览器)
+        7-Tab 仪表盘: 概览 / 根因 / 报告 / 通报 / 行动 / 证据 / 原始数据
 ```
 
-### 3.3 代码级修复（Agent-ready Spec）
+### 3.3 HTML 诊断书生成
+
+```
+触发: EventBridge "Investigation Completed" 或 MCP get_html_report 调用
+    │
+    ▼ Orchestrator Lambda (api_handler / v4_tools)
+    │
+    ▼ 1. 拉取 DOA 数据 (boto3 devops-agent)
+    │   ├── get_backlog_task(taskId)        → 任务元数据 (title/status)
+    │   └── list_journal_records(execId)    → AI 完整 markdown 报告
+    │                                          + DOA 用过的 AWS 工具列表
+    │
+    ▼ 2. Bedrock Nova Pro 增强 (ai_enhance.py · 3 个并行调用)
+    │   ├── generate_customer_announcement   → 中文用户公告 (~200 字)
+    │   ├── generate_internal_summary        → SRE 摘要 + 3 条行动项
+    │   └── generate_skill_markdown          → 自动 Skill (上传 S3)
+    │
+    ▼ 3. CloudWatch 指标拉取
+    │   └── get_metric_data(CPUUtilization, 60min)
+    │       └── 构建 ECharts option dict (折线图 + 阈值标记线)
+    │
+    ▼ 4. 组装 finding 数据结构
+    │   ├── title / severity / investigation_id / service
+    │   ├── root_cause / report_md / tool_uses
+    │   ├── customer_announcement / internal_summary
+    │   ├── auto_skill (name, description, url)
+    │   ├── metrics_chart (ECharts option)
+    │   └── operator_portal_url (DOA Web App)
+    │
+    ▼ 5. Jinja2 模板渲染 (analysis.html · 590 行)
+    │   ├── Hero (标题 + 严重度徽章 + 4 stat boxes)
+    │   ├── 4 个操作按钮 (DOA Operator / 复制公告 / 打印 / 复制链接)
+    │   └── 7 Tabs:
+    │       ├── 📊 概览     (ECharts + Mermaid 拓扑 + 工具标签 + 时间线)
+    │       ├── 🔬 根因     (根因 + 内部摘要 + 自动 Skill)
+    │       ├── 🤖 完整报告 (marked.js 渲染 markdown)
+    │       ├── 📣 通报     (公告 + 复制按钮)
+    │       ├── 🛠️ 行动     (修复步骤 + SSM Runbook 推荐)
+    │       ├── 📎 证据     (Trace IDs + 日志片段)
+    │       └── 🗂️ 原始数据 (finding JSON)
+    │
+    ▼ 6. S3 上传 (report/generator.py)
+    │   ├── put_object(Key=reports/<kind>/<ts>/<id>.html)
+    │   ├── ContentType: text/html; charset=utf-8
+    │   └── Bucket policy /reports/* 公开读 → 永久 URL
+    │
+    ▼ 7. 返回结果
+        ├──▶ 给 EB Handler: 用 URL 推送飞书 + SES
+        └──▶ 给 MCP 客户端: JSON-RPC 响应含 html_url
+```
+
+### 3.4 经验自动沉淀
+
+```
+DOA Investigation Completed
+    │
+    ▼ EventBridge: aws.devopsagent · "Investigation Completed"
+    │
+    ▼ Orchestrator Lambda (_handle_doa_event)
+    │
+    ▼ 1. ListJournalRecords → 抓 DOA AI 完整 markdown 报告
+    │   (含: 根因 + 调查步骤 + 用过的工具 + 修复建议)
+    │
+    ▼ 2. ai_enhance.generate_skill_markdown(report_md, title, task_id)
+    │   │
+    │   ▼ Bedrock Nova Pro (prompt 模板)
+    │       "从调查报告中提取可复用 Skill markdown,按以下格式:
+    │        # Skill: <短标题>
+    │        ## 适用场景 (3-5 条 bullet)
+    │        ## 调查步骤 (5-7 步,带 AWS API)
+    │        ## 常见根因 (表格: 根因|比例|验证|Runbook)
+    │        ## 修复策略 (临时缓解 + 根本修复)"
+    │   │
+    │   ▼ 输出 markdown 内容
+    │
+    ▼ 3. 包装 frontmatter + metadata
+    │   ---
+    │   name: auto-<slug>-<timestamp>
+    │   description: <从 # Skill 标题提取>
+    │   auto_generated: true
+    │   source_investigation: <task_id>
+    │   generated_at: <unix ts>
+    │   ---
+    │   <markdown 正文>
+    │
+    ▼ 4. ai_enhance.sink_skill_to_s3(bucket, skill)
+    │   ├── put_object(
+    │   │     Bucket=ReportBucket,
+    │   │     Key=skills/auto/<name>-<ts>.md,
+    │   │     ContentType="text/markdown")
+    │   └── 返回 S3 永久 URL
+    │
+    ▼ 5. 注入 finding["auto_skill"]
+    │   {
+    │     "name": "auto-demo-api-1780...",
+    │     "description": "demo-api ECS 服务延迟排查",
+    │     "url": "https://...s3.../skills/auto/auto-...md"
+    │   }
+    │
+    ▼ 6. HTML 诊断书"根因" Tab 显示:
+    │   ┌──────────────────────────────────────────┐
+    │   │ 🧬 经验已自动沉淀为 Skill                  │
+    │   │ Skill 名称: auto-demo-api-1780...        │
+    │   │ Markdown: [查看 →]                        │
+    │   └──────────────────────────────────────────┘
+    │
+    ▼ 7. 下次相似问题 (理想状态)
+        ├── 当前限制: DOA Skills API 不开放上传 (console-only)
+        ├── 临时方案: 用户从 S3 下载 markdown
+        │             → 在 DOA Operator Console 手动 Upload skill
+        └── 上线后效果:
+            DOA 自动检测告警类型 → 匹配 auto-demo-api-1780...
+            按 Skill 步骤直奔关键路径 → 调查耗时减少 80%
+            (15 min → 2-3 min)
+```
+
+**MTTR 改进效果**：
+```
+第 1 次故障 (无经验)         第 N 次相似故障 (经验匹配)
+    ↓ MTTR ~ 15 min                ↓ MTTR ~ 2-3 min
+    ↓ DOA 全量探索                  ↓ DOA 应用历史 Skill
+    ↓ 自动生成 Skill                ↓ 跳过通用探索阶段
+    ↓ 同步到 DOA                    ↓
+                          减少 80-87%
+```
+
+### 3.5 代码级修复（Agent-ready Spec）
 
 ```
 DOA Mitigation Plan
@@ -263,7 +448,7 @@ NLOps Orchestrator Lambda 收到 Investigation Completed 事件后：
 
 ---
 
-## 3.4 Quick Desktop 接入路径（核心入口之一）
+### 3.6 Quick Desktop 接入路径（核心入口之一）
 
 Quick Desktop 是中国客户最常用的 AWS 工具入口，v4 仍作为一等公民支持。
 
@@ -367,7 +552,7 @@ const MCP_API_URL = process.env.NLOPS_MCP_URL  // 从环境变量读，不再硬
 
 ---
 
-## 3.5 多源关联分析（Cross-source Correlation）
+### 3.7 多源关联分析（Cross-source Correlation）
 
 DOA 在调查过程中**自动跨数据源关联**，这是 v3 自建 Strands Agent 难以达到的：
 
@@ -390,7 +575,7 @@ Splunk (可选)      ─┘
 
 ---
 
-## 3.6 多模态分析（Architecture Diagram Understanding）
+### 3.8 多模态分析（Architecture Diagram Understanding）
 
 参考 [AI-Powered Incident Response with Nova Pro](https://aws.amazon.com/blogs/mt/using-amazon-bedrock-and-amazon-nova-for-ai-powered-incident-response/) 博客：
 
@@ -414,7 +599,7 @@ HTML 诊断书生成时:
 
 ---
 
-## 3.7 故障通报自动化（Customer Communication）
+### 3.9 故障通报自动化（Customer Communication）
 
 事故处理中最耗时的环节之一 —— 写给客户的故障公告，由 Nova Pro 自动生成：
 
@@ -445,7 +630,7 @@ Investigation Completed
 
 ---
 
-## 3.8 混合云 / 多云覆盖（Hybrid + Multi-cloud）
+### 3.10 混合云 / 多云覆盖（Hybrid + Multi-cloud）
 
 DOA 不止支持 AWS，NLOps 不需要额外开发即可继承这个能力：
 
@@ -467,7 +652,7 @@ Agent Space 可同时集成:
 
 ---
 
-## 3.9 中国区降级路径（CloudWatch Investigations 备选）
+### 3.11 中国区降级路径（CloudWatch Investigations 备选）
 
 DOA 当前不支持中国区，但 **CloudWatch Investigations** 在中国区可用。NLOps v4 设计支持运行时自动降级：
 
