@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>NLOps v4 部署架构图 (AWS)</title>
+<style>
+  :root {
+    --aws-orange: #ff9900;
+    --aws-dark: #232f3e;
+    --aws-blue: #146eb4;
+    --bg: #f7f8fa;
+    --border: #d1d5db;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+                 "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); margin: 0; padding: 20px;
+  }
+  .container {
+    max-width: 1400px; margin: 0 auto;
+    background: white; border-radius: 12px; padding: 30px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+  }
+  h1 {
+    color: var(--aws-dark); margin: 0 0 8px;
+    border-bottom: 3px solid var(--aws-orange);
+    padding-bottom: 12px; display: inline-block;
+  }
+  .subtitle { color: #6b7280; margin: 0 0 30px; font-size: 0.95em; }
+
+  /* === AWS Cloud Container === */
+  .aws-cloud {
+    border: 2px dashed var(--aws-orange);
+    border-radius: 14px;
+    padding: 30px 40px 20px;
+    margin-top: 20px;
+    position: relative;
+    background: #fffbf5;
+  }
+  .aws-cloud::before {
+    content: "AWS Cloud · us-east-1";
+    position: absolute; top: -14px; left: 30px;
+    background: white; padding: 0 12px;
+    font-size: 0.92em; color: var(--aws-orange);
+    font-weight: 600;
+  }
+
+  /* === Layer === */
+  .layer {
+    margin: 25px 0;
+    padding: 16px 20px;
+    background: white;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    position: relative;
+  }
+  .layer-label {
+    position: absolute; top: -10px; left: 16px;
+    background: var(--aws-dark); color: white;
+    padding: 2px 12px; border-radius: 12px;
+    font-size: 0.78em; letter-spacing: 0.5px;
+  }
+  .layer.input { background: linear-gradient(to right, #e0f2fe10, white); }
+  .layer.compute { background: linear-gradient(to right, #fef3c710, white); }
+  .layer.data { background: linear-gradient(to right, #ddd6fe10, white); }
+  .layer.io { background: linear-gradient(to right, #fee2e210, white); }
+
+  /* === Service Group (row of services) === */
+  .svc-row {
+    display: flex; gap: 16px;
+    flex-wrap: wrap; align-items: center;
+    justify-content: center;
+    padding: 8px 0;
+  }
+
+  /* === AWS Service Icon === */
+  .svc {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 6px;
+    width: 110px;
+    transition: transform 0.2s;
+  }
+  .svc:hover { transform: translateY(-3px); }
+  .svc-box {
+    width: 60px; height: 60px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px;
+    color: white;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+    position: relative;
+  }
+  .svc-name {
+    font-size: 0.78em; color: var(--aws-dark);
+    text-align: center; font-weight: 600;
+    line-height: 1.2;
+  }
+  .svc-note {
+    font-size: 0.7em; color: #6b7280;
+    text-align: center;
+    line-height: 1.2;
+  }
+
+  /* === Service Color Categories (AWS official colors) === */
+  .cat-compute { background: linear-gradient(135deg, #ed7100, #d05a00); }    /* Lambda 橙 */
+  .cat-network { background: linear-gradient(135deg, #8c4fff, #6c3ed4); }    /* APIGW 紫 */
+  .cat-ai { background: linear-gradient(135deg, #01a88d, #008674); }          /* AI/ML 绿 */
+  .cat-storage { background: linear-gradient(135deg, #277116, #1d5a0f); }     /* S3 深绿 */
+  .cat-database { background: linear-gradient(135deg, #3334b9, #292aa1); }    /* DDB 蓝 */
+  .cat-mgmt { background: linear-gradient(135deg, #e7157b, #b81065); }        /* CW 粉 */
+  .cat-mobile { background: linear-gradient(135deg, #ed7100, #d05a00); }      /* SES 橙 */
+  .cat-app { background: linear-gradient(135deg, #ed7100, #d05a00); }         /* SNS 橙 */
+  .cat-mgmt2 { background: linear-gradient(135deg, #c925d1, #a01eaa); }       /* SSM 紫 */
+  .cat-iam { background: linear-gradient(135deg, #dd344c, #b32b3e); }         /* IAM 红 */
+  .cat-ext { background: linear-gradient(135deg, #6b7280, #4b5563); }         /* 第三方 灰 */
+
+  /* Custom icons for non-AWS */
+  .lark-icon { background: linear-gradient(135deg, #00d6b9, #00a896); }
+  .quick-icon { background: linear-gradient(135deg, #232f3e, #1a2330); }
+
+  /* === Arrow / Flow === */
+  .arrow-down {
+    text-align: center; color: var(--aws-orange);
+    font-size: 24px; line-height: 1;
+    margin: -8px 0;
+  }
+
+  /* === Highlight box === */
+  .highlight-box {
+    border: 2px solid var(--aws-orange);
+    border-radius: 10px;
+    padding: 20px;
+    margin: 20px 0;
+    background: linear-gradient(to right, #fff7ed, white);
+    position: relative;
+  }
+  .highlight-box .highlight-label {
+    position: absolute; top: -12px; left: 16px;
+    background: var(--aws-orange); color: white;
+    padding: 4px 14px; border-radius: 12px;
+    font-size: 0.85em; font-weight: 600;
+  }
+
+  /* === Sub-flow inside Lambda === */
+  .lambda-routes {
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    gap: 10px; margin-top: 12px;
+  }
+  .route-item {
+    background: white; padding: 10px 14px;
+    border-radius: 6px; border-left: 3px solid var(--aws-orange);
+    font-size: 0.88em;
+  }
+  .route-item code {
+    color: var(--aws-blue); font-family: ui-monospace, monospace;
+    background: #f3f4f6; padding: 1px 6px; border-radius: 3px;
+  }
+
+  /* === Outside AWS === */
+  .external-box {
+    border: 2px dashed #6b7280;
+    border-radius: 12px;
+    padding: 16px 20px;
+    background: #f9fafb;
+    margin: 20px 0;
+    position: relative;
+  }
+  .external-box::before {
+    content: "External Services";
+    position: absolute; top: -12px; left: 16px;
+    background: white; padding: 0 12px;
+    font-size: 0.85em; color: #6b7280; font-weight: 600;
+  }
+
+  /* === Legend === */
+  .legend {
+    margin-top: 30px; padding: 16px;
+    background: #f9fafb; border-radius: 8px;
+    display: flex; gap: 20px; flex-wrap: wrap;
+    font-size: 0.85em;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .legend-color {
+    width: 16px; height: 16px; border-radius: 3px;
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .container { padding: 15px; }
+    .lambda-routes { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>NLOps v4 部署架构</h1>
+  <p class="subtitle">
+    AWS Cloud · us-east-1 · Single Lambda · 5 MCP Tools · DOA-Native ·
+    <strong style="color:var(--aws-orange);">23 个 AWS 服务</strong>
+  </p>
+
+  <!-- ============ Layer 1: 外部入口 (User Entry Points) ============ -->
+  <div class="external-box">
+    <div class="svc-row">
+      <div class="svc">
+        <div class="svc-box lark-icon">📱</div>
+        <div class="svc-name">飞书</div>
+        <div class="svc-note">@机器人 / 群消息</div>
+      </div>
+      <div class="svc">
+        <div class="svc-box quick-icon">🖥️</div>
+        <div class="svc-name">Quick Desktop</div>
+        <div class="svc-note">MCP stdio bridge</div>
+      </div>
+      <div class="svc">
+        <div class="svc-box cat-mgmt">📧</div>
+        <div class="svc-name">SRE 邮箱</div>
+        <div class="svc-note">SES 收件人</div>
+      </div>
+      <div class="svc">
+        <div class="svc-box cat-ext">👤</div>
+        <div class="svc-name">SRE / On-call</div>
+        <div class="svc-note">用户</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-down">↓</div>
+
+  <!-- ============ AWS Cloud ============ -->
+  <div class="aws-cloud">
+
+    <!-- Layer 1: 入口层 -->
+    <div class="layer input">
+      <div class="layer-label">⬇ 入口层 / INGRESS</div>
+      <div class="svc-row">
+        <div class="svc">
+          <div class="svc-box cat-network">🌐</div>
+          <div class="svc-name">API Gateway</div>
+          <div class="svc-note">REST · 7 routes</div>
+        </div>
+        <div class="svc">
+          <div class="svc-box cat-app">📢</div>
+          <div class="svc-name">SNS</div>
+          <div class="svc-note">CW Alarm 路由</div>
+        </div>
+        <div class="svc">
+          <div class="svc-box cat-mgmt">🚨</div>
+          <div class="svc-name">CloudWatch<br/>Alarm</div>
+          <div class="svc-note">监控告警</div>
+        </div>
+        <div class="svc">
+          <div class="svc-box cat-mgmt">🎯</div>
+          <div class="svc-name">EventBridge</div>
+          <div class="svc-note">DOA 事件</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow-down">↓</div>
+
+    <!-- Layer 2: Compute (核心 Lambda) -->
+    <div class="layer compute">
+      <div class="layer-label">⚡ 编排层 / ORCHESTRATION</div>
+      <div class="highlight-box">
+        <div class="highlight-label">⭐ 唯一自建 Lambda</div>
+        <div style="display: flex; align-items: center; gap: 24px; margin-bottom: 14px;">
+          <div class="svc-box cat-compute" style="width: 80px; height: 80px; font-size: 40px;">λ</div>
+          <div>
+            <div style="font-size: 1.2em; font-weight: 700; color: var(--aws-dark);">
+              Orchestrator Lambda
+            </div>
+            <div style="font-size: 0.88em; color: #6b7280; margin-top: 4px;">
+              Python 3.12 · 1024MB · 120s timeout · 4 路由 + 5 MCP 工具
+            </div>
+          </div>
+        </div>
+        <div class="lambda-routes">
+          <div class="route-item">
+            <code>POST /chat</code> → DOA Chat 直传
+          </div>
+          <div class="route-item">
+            <code>POST /lark-event</code> → 飞书事件 (异步两段式)
+          </div>
+          <div class="route-item">
+            <code>POST /mcp-quick</code> → 5 MCP 工具
+          </div>
+          <div class="route-item">
+            <code>POST /webhook-incoming</code> → CW Alarm 转发
+          </div>
+          <div class="route-item">
+            <code>EventBridge</code> → Investigation Completed
+          </div>
+          <div class="route-item">
+            <code>SNS</code> → CW Alarm 自动调查
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow-down">↓</div>
+
+    <!-- Layer 3: AI 服务 -->
+    <div class="layer">
+      <div class="layer-label">🤖 AI 服务 / AI ENGINE</div>
+      <div class="svc-row">
+        <div class="svc">
+          <div class="svc-box cat-ai">🧠</div>
+          <div class="svc-name">DevOps Agent</div>
+          <div class="svc-note">核心调查引擎<br/>3 Skills</div>
+        </div>
+        <div class="svc">
+          <div class="svc-box cat-ai">✨</div>
+          <div class="svc-name">Bedrock</div>
+          <div class="svc-note">LLM 推理平台</div>
+        </div>
+        <div class="svc">
+          <div class="svc-box cat-ai">🌟</div>
+          <div class="svc-name">Nova Pro</div>
+          <div class="svc-note">公告/摘要/Skill</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow-down">↓</div>
+
+    <!-- Layer 4: 存储 + 数据 -->
+    <div class="layer data">
+      <div class="layer-label">💾 数据层 / DATA</div>
+      <div class="svc-row">
+        <div class="svc">
+          <div class="svc-box cat-storage">📦</div>
+          <div class="svc-name">S3</div>
+          <div class="svc-note">HTML 诊断书<br/>auto Skills</div>
+        </div>
+        <div class="svc">
+          <div class="svc-box cat-database">🗄️</div>
+          <div class="svc-name">DynamoDB</div>
+          <div class="svc-note">Audit (90 天 TTL)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow-down">↓</div>
+
+    <!-- Layer 5: 输出 + 自动化 -->
+    <div class="layer io">
+      <div class="layer-label">📤 输出 + 自动化 / OUTPUT</div>
+      <div class="svc-row">
+        <div class="svc">
+          <div class="svc-box cat-mobile">📧</div>
+          <div class="svc-name">SES</div>
+          <div class="svc-note">告警邮件</div>
+        </div>
+        <div class="svc">
+          <div class="svc-box cat-mgmt2">⚙️</div>
+          <div class="svc-name">SSM Automation</div>
+          <div class="svc-note">2 Runbooks<br/>ECS / RDS 修复</div>
+        </div>
+        <div class="svc">
+          <div class="svc-box cat-iam">🔐</div>
+          <div class="svc-name">IAM</div>
+          <div class="svc-note">2 Roles<br/>跨服务认证</div>
+        </div>
+        <div class="svc">
+          <div class="svc-box cat-mgmt">📊</div>
+          <div class="svc-name">CloudWatch<br/>Logs</div>
+          <div class="svc-note">Lambda 日志</div>
+        </div>
+      </div>
+    </div>
+
+  </div> <!-- /aws-cloud -->
+
+  <div class="arrow-down" style="font-size:18px; color: #6b7280; margin: 16px 0;">↑↓ DOA 反向调用 ↑↓</div>
+
+  <!-- ============ DOA 调用的资源（间接） ============ -->
+  <div class="external-box" style="border-color: var(--aws-blue); background: #eff6ff;">
+    <div style="font-weight: 600; margin-bottom: 12px; color: var(--aws-blue);">
+      🔍 DOA 调查时自动访问 (无需我们调用)
+    </div>
+    <div class="svc-row">
+      <div class="svc">
+        <div class="svc-box cat-compute">💻</div>
+        <div class="svc-name">EC2</div>
+        <div class="svc-note">实例指标</div>
+      </div>
+      <div class="svc">
+        <div class="svc-box cat-compute">🐳</div>
+        <div class="svc-name">ECS</div>
+        <div class="svc-note">服务状态</div>
+      </div>
+      <div class="svc">
+        <div class="svc-box cat-database">💾</div>
+        <div class="svc-name">RDS</div>
+        <div class="svc-note">连接池/CPU</div>
+      </div>
+      <div class="svc">
+        <div class="svc-box cat-network">🚦</div>
+        <div class="svc-name">ALB</div>
+        <div class="svc-note">流量/健康</div>
+      </div>
+      <div class="svc">
+        <div class="svc-box cat-mgmt">📈</div>
+        <div class="svc-name">X-Ray</div>
+        <div class="svc-note">调用链路</div>
+      </div>
+      <div class="svc">
+        <div class="svc-box cat-mgmt">🔧</div>
+        <div class="svc-name">Config</div>
+        <div class="svc-note">变更历史</div>
+      </div>
+      <div class="svc">
+        <div class="svc-box cat-mgmt">📋</div>
+        <div class="svc-name">CloudTrail</div>
+        <div class="svc-note">API 审计</div>
+      </div>
+      <div class="svc">
+        <div class="svc-box cat-ext">🐙</div>
+        <div class="svc-name">GitHub</div>
+        <div class="svc-note">部署关联</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 部署细节 ============ -->
+  <div style="margin-top: 30px; padding: 20px; background: #f9fafb; border-radius: 10px;">
+    <h3 style="margin: 0 0 12px; color: var(--aws-dark);">📦 CDK Stack 部署清单</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; font-size: 0.9em;">
+      <div><strong>计算</strong>: 1 Lambda + 1 Layer (boto3+jinja2)</div>
+      <div><strong>API</strong>: 1 API Gateway REST + 7 routes</div>
+      <div><strong>存储</strong>: 1 S3 bucket + 2 DDB tables</div>
+      <div><strong>消息</strong>: 1 SNS Topic + 1 EventBridge Rule</div>
+      <div><strong>自动化</strong>: 2 SSM Documents</div>
+      <div><strong>权限</strong>: 2 IAM Roles + 1 inline Policy</div>
+      <div><strong>监控</strong>: 2 CW Alarms (业务 + Lambda 自身)</div>
+      <div><strong>邮件</strong>: 1 SES verified identity</div>
+    </div>
+  </div>
+
+  <!-- ============ Legend ============ -->
+  <div class="legend">
+    <div style="font-weight: 600; color: var(--aws-dark);">服务类别:</div>
+    <div class="legend-item"><div class="legend-color cat-compute"></div>计算 (Compute)</div>
+    <div class="legend-item"><div class="legend-color cat-network"></div>网络 (Network)</div>
+    <div class="legend-item"><div class="legend-color cat-ai"></div>AI/ML</div>
+    <div class="legend-item"><div class="legend-color cat-storage"></div>存储 (Storage)</div>
+    <div class="legend-item"><div class="legend-color cat-database"></div>数据库 (Database)</div>
+    <div class="legend-item"><div class="legend-color cat-mgmt"></div>管理监控</div>
+    <div class="legend-item"><div class="legend-color cat-mgmt2"></div>系统管理</div>
+    <div class="legend-item"><div class="legend-color cat-mobile"></div>消息</div>
+    <div class="legend-item"><div class="legend-color cat-iam"></div>安全/IAM</div>
+    <div class="legend-item"><div class="legend-color cat-ext"></div>外部</div>
+  </div>
+
+  <div style="margin-top: 24px; text-align: center; color: #6b7280; font-size: 0.85em;">
+    NLOps v4 · 西云数据 · 陈朋辉 · 2026-06-02
+  </div>
+
+</div>
+</body>
+</html>
