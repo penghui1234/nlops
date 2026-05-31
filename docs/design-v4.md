@@ -2,6 +2,10 @@
 
 > 基于 AWS DevOps Agent 的自然语言驱动智能运维平台（重构版）
 > 
+> **文档状态**: 实施完成（Phase 1+2+2.5 已部署） · 最后更新 2026-05-31  
+> **演示日期**: 2026-06-02  
+> **GitHub**: https://github.com/penghui1234/nlops/tree/feat/v4-doa-native
+> 
 > 参考来源：
 > - [End-to-End Agentic SRE using AWS DevOps Agent](https://aws.amazon.com/blogs/devops/building-an-end-to-end-agentic-sre-using-aws-devops-agent/) (2026-05)
 > - [Telkomsel CELYNA](https://aws.amazon.com/solutions/case-studies/telkomsel-case-study/) (2026)
@@ -10,17 +14,41 @@
 
 ---
 
+## 📊 实施现状（2026-05-31 更新）
+
+| 模块 | 设计 → 实施 | 状态 |
+|------|-----------|------|
+| Orchestrator Lambda | 1 个 + 4 路由 + 5 工具 | ✅ 已部署 us-east-1 |
+| 5 个 MCP 工具 | query_doa / start_investigation / get_html_report / trigger_runbook / notify_im | ✅ 已部署 |
+| 3 个 DOA Skills | ECS / RDS / Lambda | ✅ 已上传到 Agent Space |
+| 2 个 SSM Runbook | nlops-ecs-scale / nlops-rds-proxy-expand | ✅ 已部署 |
+| **飞书 @机器人** (替代 Slack 设计) | Custom App + 异步两段式 | ✅ 已实现 |
+| 飞书群消息卡片 | Custom Robot Webhook | ✅ 已实现 |
+| HTML 诊断书 | 7-Tab 仪表盘 + Mermaid + ECharts | ✅ 已实现 |
+| **AI 增强（Phase 2.5）** | 故障公告 + SRE 摘要 + 自动 Skill | ✅ 已实现 |
+| 告警自动闭环 | CW Alarm → SNS → DOA → 飞书+邮件 | ✅ 已实现 |
+| Quick Desktop | 5 工具 stdio bridge | ⚠️ 已实现，LLM 调工具不稳定 |
+| Nova Sonic 语音 | API GW 不支持 bidi-stream | 🔮 Roadmap Phase 4 |
+| Kiro 代码级修复 | Agent-ready Spec → PR | 🔮 Roadmap Phase 3 |
+| 多模态架构图分析 | Nova Pro Vision | 🔮 Roadmap Phase 4 |
+| 中国区降级路径 | CW Investigations 替代 | 🔮 Roadmap Phase 5 |
+
+**完成度**: 核心 100% · Phase 1+2+2.5 完成 · 进阶能力 Roadmap
+
+---
+
 ## 1. 设计原则（v4 vs v3 核心变化）
 
 | 原则 | v3 做法 | v4 做法 | 理由 |
 |------|---------|---------|------|
 | 分析引擎 | 自建 Strands Agent 编排 5 个 Tool | **DevOps Agent 原生能力为主**，仅在体验层补充 | 避免重复造轮子，DOA 已内置 CW/X-Ray/Config 关联分析 |
-| 经验沉淀 | 自建 Bedrock KB + S3 双写 | **DevOps Agent Skills** 为主 + KB 为辅 | Skills 是 DOA 原生经验封装，调查时自动匹配 |
-| 告警触发 | EventBridge Rule 直连 Lambda | **Webhook** 触发 DOA Investigation | 官方推荐路径，支持多源（CW/Splunk/自定义） |
-| 修复执行 | 自建 L2 Lambda + Confirm Token | **SSM Runbook** + Agent-ready Spec → Kiro | 标准化、可审计、支持代码级修复 |
-| 语音交互 | placeholder（未实现） | **Nova Sonic** 语音 → 文字 → DOA → 语音回复 | 参考 CW Investigations + Nova Sonic 博客 |
-| 可视化输出 | 自建 Jinja2 HTML 诊断书 | **保留并增强**（这是核心差异化） | DOA 原生输出偏文本，HTML 诊断书是我们的增量价值 |
-| 通知通道 | SES 邮件 | **Slack/企微/飞书** + SES 邮件 | DOA 原生支持 Slack，IM 覆盖中国客户 |
+| 经验沉淀 | 自建 Bedrock KB + S3 双写 | **DevOps Agent Skills** + Nova Pro 自动生成新 Skill | Skills 是 DOA 原生经验封装，调查时自动匹配 |
+| 告警触发 | EventBridge Rule 直连 Lambda | **CW Alarm → SNS → Lambda → DOA Webhook (HMAC)** | 官方推荐路径，支持多源（CW/Splunk/自定义） |
+| 修复执行 | 自建 L2 Lambda + Confirm Token | **SSM Automation Runbook** + Agent-ready Spec → Kiro (Roadmap) | 标准化、可审计、支持代码级修复 |
+| 主交互入口 | 无（v3 仅 IM webhook） | **飞书 @机器人 (Custom App)** + Quick Desktop + 邮件 | 中国客户场景，DOA 原生 Slack 不适用 |
+| 群消息推送 | SES 邮件 | **飞书 Custom Robot Webhook** + SES 邮件双通道 | 团队协作 + 个人值班双覆盖 |
+| 可视化输出 | 自建 Jinja2 HTML 诊断书 | **7-Tab 仪表盘式诊断书** + Nova Pro 增强（公告/摘要/自动 Skill）| DOA 原生输出偏文本，HTML 诊断书是核心增量价值 |
+| 语音交互 | placeholder（未实现） | **Roadmap Phase 4** (Nova Sonic 双向流式) | API GW 不支持 bidi-stream，需 ECS WebSocket |
 
 ---
 
@@ -30,18 +58,19 @@
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                          交互层 (Entry Points)                            │
 │                                                                          │
-│  📱 企微/飞书 Bot   🖥️ Quick Desktop   🎙️ Nova Sonic 语音   📧 SES邮件   │
-│   (聊天/Webhook)   (本地MCP桥接)        (WebSocket)         (告警通知)    │
-│       │                  │                    │                  ▲       │
-│       │                  │                    │                  │       │
-│       ▼                  ▼                    ▼                  │       │
-│  ┌────────────┐   ┌─────────────────┐   ┌──────────────┐         │       │
-│  │ POST /chat │   │ POST /mcp       │   │ WSS /voice   │         │       │
-│  │ POST /hook │   │ (JSON-RPC 2.0)  │   │ (双向流)     │         │       │
-│  └─────┬──────┘   └────────┬────────┘   └──────┬───────┘         │       │
+│  📱 飞书 @机器人      🖥️ Quick Desktop      📧 SES 邮件      🚨 CW Alarm │
+│   (Custom App,      (本地 MCP 桥接,        (告警通知)         (告警源)   │
+│    异步两段式)       5 工具可见)                                           │
+│       │                  │                     ▲                  │       │
+│       │                  │                     │                  │       │
+│       ▼                  ▼                     │                  ▼       │
+│  ┌────────────┐   ┌─────────────────┐   ┌──────────────┐   ┌──────────┐  │
+│  │ POST       │   │ POST /mcp       │   │ JSON-RPC     │   │ SNS Topic│  │
+│  │ /lark-event│   │ (JSON-RPC 2.0)  │   │ Reply        │   │          │  │
+│  └─────┬──────┘   └────────┬────────┘   └──────┬───────┘   └────┬─────┘  │
 │        └───────────────────┼───────────────────┘                 │       │
 │                            ▼                                     │       │
-│                    API Gateway (REST + WebSocket)                │       │
+│                    API Gateway (REST · 7 routes)                 │       │
 └────────────────────────────┼─────────────────────────────────────┼───────┘
                                ↓
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -492,17 +521,23 @@ def handler(event, context):
 
 ### 4.2 NLOps MCP Server（注册到 DOA Agent Space）
 
-**职责**：为 DOA 提供客户特定的补充能力
+**职责**：为 DOA 提供客户特定的补充能力，同时给任何 MCP-aware AI 客户端调用
 
-| MCP Tool | 用途 | 数据源 |
-|----------|------|--------|
-| `get_html_report` | 生成 HTML 诊断书 URL | Jinja2 + S3 |
-| `get_architecture_diagram` | 返回服务架构图 | S3 (预上传) |
-| `query_im_history` | 查询 IM 历史对话 | DynamoDB |
-| `notify_im_channel` | 推送消息到企微/飞书 | 企微/飞书 API |
-| `get_cost_impact` | 评估故障成本影响 | CUR + Nova Pro |
+| MCP Tool | 用途 | 实现 |
+|----------|------|------|
+| `query_doa` | DOA Chat 一次性问答 | boto3 `devops-agent.create_chat()` + `send_message()` |
+| `start_investigation` | 启动深度调查（异步） | boto3 `create_backlog_task(type=INVESTIGATION)` |
+| `get_html_report` | 生成 HTML 诊断书 URL | Jinja2 + S3 + Nova Pro 增强 |
+| `trigger_runbook` | 执行 SSM Automation | boto3 `ssm.start_automation_execution()` |
+| `notify_im` | 推送 IM 消息（飞书 / 邮件） | Lark Custom Robot Webhook + SES |
 
 **精简原则**：只做 DOA 原生不支持的事情。DOA 已内置 CW/Logs/X-Ray/Config/GitHub 集成，不再重复封装。
+
+**调用链**：客户端 → API Gateway `/mcp-quick` → Lambda `_handle_mcp` → MCP server `call_tool()` → 5 工具实现
+
+> 💡 设计文档早期列过 `get_architecture_diagram` / `query_im_history` / `get_cost_impact` 这 3 个抽象工具，
+> 实施中替换为更实用的 `query_doa` / `start_investigation` / `trigger_runbook`。
+> 总数仍为 5 个，符合精简原则。
 
 ### 4.3 DevOps Agent Skills（经验沉淀）
 
@@ -543,28 +578,43 @@ def handler(event, context):
 DOA 原生输出是文本/Slack 消息，缺乏可视化。HTML 诊断书是我们的核心增量：
 
 ```
-Investigation Completed Event
+Investigation Completed Event (EventBridge: aws.devopsagent)
     ↓
-Report Lambda:
-    1. GetBacklogTask → 获取完整调查结果
-    2. 多模态增强:
-       - 架构图标注故障点 (Nova Pro Vision)
-       - ECharts 渲染指标趋势
-       - 时间线可视化
-    3. Jinja2 渲染 → S3 Presigned URL (30天)
-    4. 推送: Slack卡片 / IM卡片 / SES邮件
+Lambda EB Handler:
+    1. 解析嵌套事件 (metadata.task_id, data.status)
+    2. ListJournalRecords → 抓取 DOA AI 完整 markdown 报告
+    3. Bedrock Nova Pro 增强:
+       - 故障公告 (用户公告,中文,可直接发布)
+       - SRE 内部摘要 (含 3 行动项)
+       - 自动 Skill markdown (上传 S3 skills/auto/)
+    4. CloudWatch GetMetricData → ECharts 趋势图
+    5. Jinja2 渲染 (含 marked.js + Mermaid + ECharts)
+    6. 上传 S3 → 永久公开 URL (bucket policy /reports/* 公开)
+    7. 推送: 飞书群消息卡片 + SES HTML 邮件
 ```
 
-**诊断书内容**：
-- 📊 指标趋势图（ECharts 交互式）
-- 🏗️ 架构图 + 故障点标注
-- 📝 AI 根因解读（中文）
-- ⏱️ 事件时间线
-- 💡 修复建议 + 风险等级
-- 📎 证据链（日志片段 + Trace ID）
-- 🔗 DOA Operator Portal 链接
+**HTML 诊断书 7-Tab 仪表盘**：
 
-### 4.5 Nova Sonic 语音交互
+| Tab | 内容 |
+|-----|------|
+| 📊 概览 | ECharts 趋势图 + Mermaid 服务拓扑 + 工具标签 + 时间线 |
+| 🔬 根因 | 根因分析 + SRE 内部摘要 + 自动 Skill 提示 |
+| 🤖 完整报告 | DOA AI markdown 报告 (marked.js 浏览器端渲染) |
+| 📣 通报 | 故障公告 (一键复制) |
+| 🛠️ 行动 | 修复步骤 + 推荐 SSM Runbook |
+| 📎 证据 | Trace IDs + 日志片段 |
+| 🗂️ 原始数据 | finding JSON (debug 用) |
+
+**头部 Hero 区**：
+- 严重度彩色徽章 (red/high orange/medium yellow/low blue/info)
+- 4 个 Quick Stats 卡片 (严重度 / 调查状态 / 工具数 / 报告类型)
+- 4 个操作按钮 (打开 DOA Operator / 复制公告 / 打印 PDF / 复制链接)
+
+**未实现的 Roadmap**：
+- 🔮 架构图 + Nova Pro Vision 故障点标注 (Phase 4)
+- 🔮 时间线可视化 (DOA 暂未返回结构化 timeline)
+
+### 4.5 Nova Sonic 语音交互（Roadmap Phase 4 - 未实现）
 
 参考 CW Investigations + Nova Sonic 博客的架构：
 
@@ -586,6 +636,74 @@ Nova Sonic → DOA Chat → "P99 延迟 320ms，RDS 连接池 78%"
 Nova Sonic → 语音回复: "demo-api 的 P99 延迟升到了 320 毫秒，
     主要原因是 RDS 连接池使用率达到 78%。需要我启动深度调查吗？"
 ```
+
+### 4.6 飞书 (Lark) @机器人集成（实际实现，替代 Slack）
+
+DOA 原生只支持 Slack，不支持中国 IM。NLOps v4 实现了完整的飞书集成：
+
+#### 双栈集成
+1. **Custom Robot Webhook** (单向推送)：用于告警闭环 → 群消息卡片
+2. **Custom App + Event Subscription** (双向交互)：用于 @机器人对话
+
+#### 异步两段式（关键设计）
+
+飞书要求 webhook 3 秒内 ack，但 DOA 调用 5-30 秒。所以采用：
+
+```
+Stage 1 (sync, < 1s):
+  飞书事件 → Lambda /lark-event
+  → 解析 event_id (去重)
+  → lambda.invoke(InvocationType=Event)  # 自调用
+  → 返回 200 OK
+
+Stage 2 (async, 5-30s):
+  自调用触发的 Lambda 实例
+  → _process_question(text)
+  → 调 DOA / start_investigation / get_html_report
+  → Lark Reply API 回复原消息
+```
+
+#### 意图路由
+
+`lark_handler._process_question()` 用关键词匹配决定走哪个工具：
+- 问候 (你好/help) → 返回工具能力介绍
+- 包含 task_id + "诊断书" → `get_html_report`
+- 包含"调查/排查/为什么" → `start_investigation`
+- 默认 → DOA chat (有 timeout fallback)
+
+### 4.7 AI 增强（Phase 2.5 - 已实现）
+
+每次 DOA Investigation 完成后，Bedrock Nova Pro 自动增强诊断书内容：
+
+#### 1. 故障公告自动生成（customer_announcement）
+**Prompt**：
+```
+基于以下故障调查报告,生成一份面向最终用户的服务公告。
+要求: 简体中文、不超过 200 字、不透露技术细节、专业致歉。
+```
+**输出**：直接发布到状态页 / 微博 / 邮件群发的中文公告。
+
+#### 2. SRE 内部摘要（internal_summary）
+**Prompt**：
+```
+基于调查报告,为 SRE 团队生成内部摘要,含根因 + 主要影响 + 3 条行动项。
+```
+**输出**：markdown 短列表，方便 SRE 跟进。
+
+#### 3. 经验自动沉淀（auto_skill）
+**Prompt**：
+```
+从调查报告中提取可复用 Skill markdown,按 DOA Skill 模板格式
+(适用场景 / 调查步骤 / 常见根因 / 修复策略)。
+```
+**输出**：完整 SKILL.md，自动上传到 S3 `skills/auto/<name>-<ts>.md`。
+（DOA Skills API 不开放上传，需手动迁移到 DOA Web App）
+
+#### 4. ECharts 指标图（metrics_chart）
+**实现**：CloudWatch GetMetricData → 构建 ECharts option dict → 注入 finding。
+- 数据：CPUUtilization 最近 60 分钟
+- 图表：折线图 + 阈值标记线
+- 在 HTML 诊断书"概览" Tab 渲染
 
 ---
 
@@ -666,29 +784,45 @@ vs v3: 月成本降低 ~$240（去掉 Bedrock KB OpenSearch $150 + L2 Lambda + S
 ## 8. 实施路线
 
 ### Phase 1: 核心闭环（2 周）
-- [ ] 创建 DevOps Agent Space，配置 CW + GitHub 集成
-- [ ] 编写 Webhook Forwarder Lambda（CW Alarm → DOA）
-- [ ] 编写 3 个初始 Skills（ECS/RDS/Lambda 故障）
-- [ ] 配置 Slack 通知通道
-- [ ] 验证：告警 → 自动调查 → Slack 通知
+### Phase 1: 核心闭环（2 周） ✅ **已完成**
+- [x] 创建 DevOps Agent Space，配置 CW + IAM 集成
+- [x] 编写 Webhook Forwarder Lambda（CW Alarm → SNS → Lambda → DOA）
+- [x] 编写 3 个初始 Skills（ECS/RDS/Lambda 故障）+ 上传 zip 包
+- [x] 配置飞书 Custom Robot Webhook（替代 Slack）
+- [x] 验证：告警 → 自动调查 → 飞书+邮件双通道通知
 
-### Phase 2: 体验层（1 周）
-- [ ] 实现 HTML 诊断书渲染（EventBridge → Report）
-- [ ] 注册 NLOps MCP Server 到 Agent Space（5 tools）
-- [ ] **Quick Desktop 接入**：复用 v3 mcp-bridge，改用 5 个新工具
-- [ ] 接入企微/飞书 Bot
-- [ ] 验证：Quick Desktop 完整对话流 + 告警闭环 + HTML 诊断书 + IM 通知
+### Phase 2: 体验层（1 周） ✅ **已完成**
+- [x] 实现 HTML 诊断书渲染（EventBridge → Lambda → Jinja2 → S3）
+- [x] 注册 NLOps MCP Server 到 Agent Space（5 tools）
+- [x] **Quick Desktop 接入**：复用 v3 mcp-bridge，改用 5 个新工具（实测 LLM 调工具不稳定）
+- [x] **飞书 @机器人接入**：Custom App + Event Subscription（异步两段式）
+- [x] 验证：飞书完整对话流 + 告警闭环 + HTML 诊断书 + 双通道通知
 
-### Phase 3: 语音 + 修复（1 周）
-- [ ] Nova Sonic 语音交互实现
-- [ ] SSM Runbook 编写（3 个常见修复）
-- [ ] Agent-ready Spec → Kiro 集成验证
-- [ ] 验证：语音巡检 + 自动修复
+### Phase 2.5: AI 增强（追加） ✅ **已完成**
+- [x] 故障公告自动生成（Nova Pro，中文用户公告）
+- [x] SRE 内部摘要（含 3 行动项）
+- [x] 经验自动沉淀（Investigation → 自动 Skill markdown → S3）
+- [x] ECharts 指标趋势图（CW GetMetricData → 折线图）
+- [x] HTML 诊断书 7-Tab 仪表盘 + Mermaid 服务拓扑
 
-### Phase 4: 经验沉淀（持续）
-- [ ] Investigation 完成后自动生成 Skill
-- [ ] Skills 版本管理 + 团队共享
-- [ ] 效果度量：MTTR 对比
+### Phase 3: 语音 + 代码级修复（Q3 2026）
+- [x] SSM Runbook 编写（2 个：ECS 扩容 + RDS Proxy 扩容）
+- [ ] Nova Sonic 语音交互（需 ECS Fargate WebSocket，复杂度高）
+- [ ] Agent-ready Spec → Kiro 集成验证（自动 PR）
+- [ ] 多模态架构图分析（Nova Pro Vision）
+- [ ] 验证：语音巡检 + 自动修复 + 代码级修复
+
+### Phase 4: 智能进阶（Q4 2026）
+- [ ] 自动 Skill 同步到 DOA Web App（API 开放后）
+- [ ] 故障预测（Nova Pro 历史相似度）
+- [ ] 拓扑图自动生成（X-Ray service map → Mermaid）
+- [ ] Skills 版本管理 + 团队共享 UI
+- [ ] 效果度量：MTTR 对比 dashboard
+
+### Phase 5: 中国区（2027）
+- [ ] CloudWatch Investigations 替代 DOA（中国区 DOA 不可用）
+- [ ] Bedrock KB 替代 Skills（中国区可用）
+- [ ] 中国客户落地
 
 ---
 
