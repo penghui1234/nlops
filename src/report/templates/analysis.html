@@ -293,7 +293,7 @@
     <div class="card">
       <h2>🏗️ 服务拓扑</h2>
       <div class="mermaid">
-graph LR
+{% if finding.topology_mermaid %}{{ finding.topology_mermaid }}{% else %}graph LR
     USER[👤 用户] --> ALB[🚦 ALB]
     ALB --> ECS[📦 ECS Service<br/>{{ finding.service or 'demo-api' }}]
     ECS --> RDS[(🗄️ RDS<br/>主数据库)]
@@ -302,10 +302,14 @@ graph LR
     LAMBDA --> S3[📦 S3]
 
     style ECS fill:#ff9900,stroke:#232f3e,color:#fff
-    style RDS fill:#dc2626,stroke:#fff,color:#fff
+    style RDS fill:#dc2626,stroke:#fff,color:#fff{% endif %}
       </div>
       <p style="margin-top: 12px; color: var(--text-light); font-size: 0.88em;">
+        {% if finding.topology_mermaid %}
+        🤖 拓扑由 Nova Pro 根据 DOA 实际调用的工具动态生成
+        {% else %}
         🔴 红色节点 = 本次调查重点关注的资源
+        {% endif %}
       </p>
     </div>
 

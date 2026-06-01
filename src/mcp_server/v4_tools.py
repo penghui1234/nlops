@@ -172,6 +172,16 @@ def get_html_report(task_id: str = "", title: str = "",
             ),
             "ts": int(datetime.now(timezone.utc).timestamp()),
         }
+        # Generate dynamic topology
+        try:
+            from tools import ai_enhance
+            finding["topology_mermaid"] = ai_enhance.generate_topology_mermaid(
+                report_md=report_md,
+                tool_uses=tool_uses,
+                service_name=inv.get("service", "") if isinstance(inv, dict) else "demo-api",
+            )
+        except Exception:
+            pass
     else:
         finding = {
             "title": title or "NLOps Diagnostic",

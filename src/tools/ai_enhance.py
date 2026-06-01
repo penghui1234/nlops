@@ -256,6 +256,114 @@ def sink_skill_to_s3(bucket: str, skill: dict[str, str]) -> str:
 # ============================================================ #
 # Feature 3: ECharts metrics chart data fetcher
 # ============================================================ #
+def generate_topology_mermaid(report_md: str, tool_uses: list[str],
+                                service_name: str = "demo-api") -> str:
+    """根据 DOA 实际调用过的工具 + 报告内容,动态生成 Mermaid 拓扑.
+
+    优先级:
+    1. Nova Pro 从报告 + 工具列表生成 mermaid graph
+    2. fallback: 根据 tool_uses 关键字推断 (规则匹配)
+    3. 兜底: 默认服务节点
+    """
+    if not report_md and not tool_uses:
+        return _default_topology(service_name)
+
+    # 1. Nova Pro 生成
+    try:
+        tools_str = ", ".join(tool_uses[:10]) if tool_uses else "无"
+        prompt = f"""基于以下 DOA 调查报告和使用的 AWS 工具,生成一个 Mermaid 服务拓扑图。
+
+要求:
+- 使用 graph LR (从左到右)
+- 只包含报告中实际涉及的资源类型
+- 节点标签用中文 + emoji
+- 在被调查的核心服务节点加 style fill:#ff9900,color:#fff
+- 如果识别出有问题的节点(根因相关), 加 style fill:#dc2626,color:#fff
+- 不要 markdown 代码块包裹,直接输出 mermaid 代码
+
+DOA 调用过的工具: {tools_str}
+
+故障调查报告:
+{report_md[:2500]}
+
+被调查的核心服务: {service_name}
+
+请直接输出 Mermaid graph 代码 (从 'graph LR' 开始)。"""
+
+        result = _invoke_nova(prompt, max_tokens=600).strip()
+        # Strip code fences if Nova added them
+        result = result.replace("```mermaid", "").replace("```", "").strip()
+        # Validate: must start with 'graph'
+        if result.lower().startswith("graph"):
+            logger.info("topology.nova_generated", extra={"len": len(result)})
+            return result
+    except Exception as exc:
+        logger.warning("topology.nova_failed", extra={"err": str(exc)[:200]})
+
+    # 2. Rule-based fallback
+    return _rule_based_topology(tool_uses, service_name)
+
+
+def _rule_based_topology(tool_uses: list[str], service_name: str) -> str:
+    """根据工具关键字简单匹配生成拓扑."""
+    tools_lower = " ".join(tool_uses).lower()
+    nodes = ["USER[👤 用户]"]
+    edges = []
+    has_lb = any(k in tools_lower for k in ["alb", "elb", "elasticloadbalancing"])
+    has_ec2 = "ec2" in tools_lower
+    has_ecs = "ecs" in tools_lower
+    has_lambda = "lambda" in tools_lower
+    has_rds = "rds" in tools_lower
+    has_ddb = "dynamodb" in tools_lower or "ddb" in tools_lower
+    has_cache = "elasticache" in tools_lower or "cache" in tools_lower
+    has_s3 = "s3" in tools_lower
+    has_xray = "xray" in tools_lower or "x-ray" in tools_lower
+
+    # Build chain
+    last = "USER"
+    if has_lb:
+        nodes.append("ALB[🚦 ALB]")
+        edges.append(f"{last} --> ALB")
+        last = "ALB"
+    # core service
+    if has_ecs:
+        nodes.append(f"SVC[📦 ECS Service<br/>{service_name}]")
+        edges.append(f"{last} --> SVC")
+    elif has_ec2:
+        nodes.append(f"SVC[💻 EC2<br/>{service_name}]")
+        edges.append(f"{last} --> SVC")
+    elif has_lambda:
+        nodes.append(f"SVC[λ Lambda<br/>{service_name}]")
+        edges.append(f"{last} --> SVC")
+    else:
+        nodes.append(f"SVC[📦 {service_name}]")
+        edges.append(f"{last} --> SVC")
+
+    # downstream
+    if has_rds: nodes.append("RDS[(🗄️ RDS)]"); edges.append("SVC --> RDS")
+    if has_ddb: nodes.append("DDB[(🗄️ DynamoDB)]"); edges.append("SVC --> DDB")
+    if has_cache: nodes.append("CACHE[(⚡ ElastiCache)]"); edges.append("SVC --> CACHE")
+    if has_s3: nodes.append("S3[📦 S3]"); edges.append("SVC --> S3")
+
+    if has_xray:
+        nodes.append("XRAY[📈 X-Ray]"); edges.append("SVC -.-> XRAY")
+
+    # Style: SVC orange highlight
+    styles = ["style SVC fill:#ff9900,stroke:#232f3e,color:#fff"]
+
+    return "graph LR\n    " + "\n    ".join(nodes + edges + styles)
+
+
+def _default_topology(service_name: str) -> str:
+    """默认拓扑(无任何工具信息时使用)."""
+    return f"""graph LR
+    USER[👤 用户] --> SVC[📦 {service_name}]
+    style SVC fill:#ff9900,stroke:#232f3e,color:#fff"""
+
+
+# ============================================================ #
+# Feature 4: ECharts metrics chart data fetcher
+# ============================================================ #
 def build_metrics_chart(service: str = "demo-api",
                          instance_id: str = "i-0257069e2402a0fbc",
                          minutes: int = 60) -> dict[str, Any]:

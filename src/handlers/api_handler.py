@@ -391,6 +391,12 @@ def _handle_doa_event(event: dict) -> dict:
                 instance_id="i-0257069e2402a0fbc",
                 minutes=60,
             )
+            # Generate dynamic topology based on DOA tool usage
+            finding["topology_mermaid"] = ai_enhance.generate_topology_mermaid(
+                report_md=report_md,
+                tool_uses=tool_uses,
+                service_name=detail.get("service") or "demo-api",
+            )
             logger.info("eb.ai_enhanced", extra={"trace_id": trace_id})
         except Exception as exc:
             logger.exception("eb.ai_enhance_failed")
