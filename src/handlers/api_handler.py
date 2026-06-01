@@ -404,7 +404,12 @@ def _handle_doa_event(event: dict) -> dict:
     # 1) Render HTML
     html_url = ""
     try:
-        html_url = _report.render_and_upload(finding, kind="alert", trace_id=trace_id)
+        # 用固定 key 写入 reports/diagnostic/{task_id}.html
+        # 这样 get_html_report MCP 工具可以直接复用,不用重新生成
+        html_url = _report.render_and_upload(
+            finding, kind="diagnostic",
+            trace_id=trace_id, task_id=task_id, use_fixed_key=True,
+        )
     except Exception as exc:
         logger.exception("eb.render_failed")
 

@@ -135,8 +135,26 @@ def get_html_report(task_id: str = "", title: str = "",
         findings: JSON or markdown findings.
     """
     finding: dict[str, Any] = {}
+    cached_url = None
+    task_status = "UNKNOWN"
+
     if task_id:
+        # 先查 DOA 任务状态 (轻量 API,不调 LLM)
         inv = _get_doa().get_investigation(task_id)
+        task_status = inv.get("status", "UNKNOWN") if isinstance(inv, dict) else "UNKNOWN"
+
+        # 已完成的任务 → 优先用 S3 缓存 (跳过 Nova Pro,1秒返回)
+        if task_status == "COMPLETED":
+            cached_url = _get_report().cached_url(task_id, kind="diagnostic")
+            if cached_url:
+                return {
+                    "status": "ok",
+                    "html_url": cached_url,
+                    "title": inv.get("title", f"Investigation {task_id}") if isinstance(inv, dict) else f"Investigation {task_id}",
+                    "cached": True,
+                }
+
+        # 缓存未命中 / 任务进行中 → 实时生成
         # Pull AI findings from journal records (the actual report)
         execution_id = inv.get("executionId", "") if isinstance(inv, dict) else ""
         ai_findings = _get_doa().get_investigation_findings(execution_id) if execution_id else {}
@@ -163,7 +181,7 @@ def get_html_report(task_id: str = "", title: str = "",
             "title": inv.get("title") or title or f"Investigation {task_id}",
             "investigation_id": task_id,
             "execution_id": execution_id,
-            "status": inv.get("status", "UNKNOWN"),
+            "status": task_status,
             "report_md": report_md,
             "tool_uses": tool_uses,
             "root_cause": root_cause,
@@ -191,12 +209,22 @@ def get_html_report(task_id: str = "", title: str = "",
         }
 
     try:
+        # 已完成任务用固定路径(永久缓存,可被下次复用)
+        # 进行中任务用 timestamped 路径(每次调用都重新生成)
+        use_fixed = bool(task_id and task_status == "COMPLETED")
         url = _get_report().render_and_upload(
             finding=finding,
             kind="diagnostic",
             trace_id=task_id or f"rpt-{uuid.uuid4().hex[:8]}",
+            task_id=task_id,
+            use_fixed_key=use_fixed,
         )
-        return {"status": "ok", "html_url": url, "title": finding["title"]}
+        return {
+            "status": "ok",
+            "html_url": url,
+            "title": finding["title"],
+            "cached": False,
+        }
     except Exception as exc:
         logger.exception("report.render_failed")
         return {"status": "error", "error": str(exc)[:300]}

@@ -32,15 +32,33 @@ class ReportGenerator:
         finding: dict[str, Any],
         kind: str = "diagnostic",
         trace_id: str | None = None,
+        task_id: str | None = None,
+        use_fixed_key: bool = False,
     ) -> str:
+        """渲染并上传 HTML 报告到 S3.
+
+        Args:
+            finding: 报告数据字典
+            kind: 报告类型 (diagnostic / alert)
+            trace_id: 跟踪 ID (备用 report_id)
+            task_id: DOA 任务 ID,用于固定路径缓存
+            use_fixed_key: True 时用固定路径 reports/diagnostic/{task_id}.html
+                          (适合 COMPLETED 任务,可复用); False 时带 timestamp.
+        """
         if not self.bucket:
             raise RuntimeError("REPORT_BUCKET env not set")
 
-        report_id = trace_id or f"rpt-{uuid.uuid4()}"
+        report_id = trace_id or task_id or f"rpt-{uuid.uuid4()}"
         ts = int(time.time())
 
         html = self._render(finding, kind=kind, report_id=report_id, ts=ts)
-        key = f"reports/{kind}/{ts}/{report_id}.html"
+
+        if use_fixed_key and task_id:
+            # 固定路径: 同一 task_id 永远是同一 URL,新内容覆盖旧的
+            key = f"reports/{kind}/{task_id}.html"
+        else:
+            # 带 timestamp 的临时路径
+            key = f"reports/{kind}/{ts}/{report_id}.html"
 
         self._s3.put_object(
             Bucket=self.bucket,
@@ -54,6 +72,19 @@ class ReportGenerator:
         url = f"https://{self.bucket}.s3.{_REGION}.amazonaws.com/{key}"
         logger.info("report.uploaded", extra={"key": key, "report_id": report_id})
         return url
+
+    def cached_url(self, task_id: str, kind: str = "diagnostic") -> str | None:
+        """如果 S3 上已经有固定路径的报告,返回 URL,否则返回 None."""
+        if not self.bucket or not task_id:
+            return None
+        key = f"reports/{kind}/{task_id}.html"
+        try:
+            self._s3.head_object(Bucket=self.bucket, Key=key)
+            url = f"https://{self.bucket}.s3.{_REGION}.amazonaws.com/{key}"
+            logger.info("report.cache_hit", extra={"key": key, "task_id": task_id})
+            return url
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------ #
     def _render(
