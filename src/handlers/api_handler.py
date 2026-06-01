@@ -351,12 +351,7 @@ def _handle_doa_event(event: dict) -> dict:
         "service": detail.get("service", ""),
         "report_md": report_md,            # full markdown report from DOA AI
         "tool_uses": tool_uses,            # list of AWS tools DOA used
-        "root_cause": (
-            # Try to extract first heading or first 800 chars of report
-            (report_md.split("\n")[0][:300] if report_md else "")
-            or (inv.get("description", "")[:600]
-                if isinstance(inv, dict) else "")
-        ),
+        "root_cause": "",  # filled by ai_enhance.extract_root_cause below
         "operator_portal_url": (
             (f"https://{agent_space}.aidevops.global.app.aws/investigation/{task_id}" if task_id and agent_space else "")
         ),
@@ -368,6 +363,10 @@ def _handle_doa_event(event: dict) -> dict:
     if report_md:
         try:
             from tools import ai_enhance
+            # 提取核心根因 (替换之前的简单截取)
+            finding["root_cause"] = ai_enhance.extract_root_cause(
+                report_md, title=finding["title"],
+            )
             finding["customer_announcement"] = ai_enhance.generate_customer_announcement(
                 report_md, title=finding["title"], severity=severity,
             )

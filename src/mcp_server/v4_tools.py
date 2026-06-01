@@ -143,6 +143,22 @@ def get_html_report(task_id: str = "", title: str = "",
         report_md = ai_findings.get("report_md", "")
         tool_uses = ai_findings.get("tool_uses", [])
 
+        # Extract real root cause via Nova Pro (not just first line of report)
+        root_cause = ""
+        try:
+            from tools import ai_enhance
+            if report_md:
+                root_cause = ai_enhance.extract_root_cause(
+                    report_md, title=inv.get("title", "") if isinstance(inv, dict) else ""
+                )
+        except Exception:
+            pass
+        if not root_cause:
+            root_cause = (
+                report_md.split("\n")[0][:300] if report_md
+                else (inv.get("description", "")[:600] if isinstance(inv, dict) else "")
+            )
+
         finding = {
             "title": inv.get("title") or title or f"Investigation {task_id}",
             "investigation_id": task_id,
@@ -150,10 +166,7 @@ def get_html_report(task_id: str = "", title: str = "",
             "status": inv.get("status", "UNKNOWN"),
             "report_md": report_md,
             "tool_uses": tool_uses,
-            "root_cause": (
-                report_md.split("\n")[0][:300] if report_md
-                else inv.get("description", "")[:600]
-            ),
+            "root_cause": root_cause,
             "operator_portal_url": (
                 f"https://{os.getenv('DOA_AGENT_SPACE_ID', '')}.aidevops.global.app.aws/investigation/{task_id}"
             ),

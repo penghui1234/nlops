@@ -56,6 +56,64 @@ def _invoke_nova(prompt: str, max_tokens: int = 800) -> str:
 # ============================================================ #
 # Feature 1: 故障公告自动生成
 # ============================================================ #
+def extract_root_cause(report_md: str, title: str = "") -> str:
+    """从 DOA AI 报告中提取核心根因 (1-2 句话).
+
+    优先级:
+    1. 解析 markdown 找 ## 根因 / ## Root Cause / ## 根本原因 section
+    2. 找不到则用 Nova Pro 提取
+    3. fallback 取报告前 300 字
+    """
+    if not report_md:
+        return ""
+
+    # 1. Try parsing markdown headings
+    import re
+    patterns = [
+        r"##+\s*(?:根本原因|根因分析|Root Cause|主要原因|核心原因)\s*\n+([^\n#]+(?:\n(?!#)[^\n#]+)*)",
+        r"\*\*(?:根本原因|根因|Root Cause)\*\*[:：]?\s*([^\n]+(?:\n(?!#)[^\n]+){0,3})",
+    ]
+    for pat in patterns:
+        m = re.search(pat, report_md, re.IGNORECASE)
+        if m:
+            text = m.group(1).strip()
+            # Clean markdown formatting
+            text = re.sub(r"\*\*", "", text)
+            text = re.sub(r"\n+", " ", text)
+            text = re.sub(r"\s+", " ", text)
+            if 30 < len(text) < 500:
+                return text.strip()[:400]
+
+    # 2. Use Nova Pro to extract
+    prompt = f"""从以下故障调查报告中,提取核心**根因**(1-2 句话,简体中文,不超过 200 字)。
+
+要求:
+- 直接说明问题的根本原因(不是症状)
+- 不要 markdown 格式,纯文本
+- 不要前缀(如"根因是" / "原因是")
+
+故障标题: {title}
+
+调查报告:
+{report_md[:3000]}
+
+请直接输出根因描述,不要任何前缀或解释。"""
+    extracted = _invoke_nova(prompt, max_tokens=300).strip()
+    if extracted and 20 < len(extracted) < 500:
+        return extracted
+
+    # 3. Fallback: first paragraph of report (skip title)
+    paras = [p.strip() for p in report_md.split("\n\n") if p.strip()]
+    for para in paras:
+        # Skip headings
+        if para.startswith("#"):
+            continue
+        if 30 < len(para) < 500:
+            return para[:400]
+
+    return report_md[:300]
+
+
 def generate_customer_announcement(report_md: str, title: str = "",
                                     severity: str = "info") -> str:
     """Generate a customer-facing service announcement (中文)."""
